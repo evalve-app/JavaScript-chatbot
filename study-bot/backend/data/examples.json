@@ -1,0 +1,32 @@
+{
+  "closures": {
+    "topic": "Closures",
+    "code": "function makeCounter() {\n  let count = 0;\n\n  return function increment() {\n    count += 1;\n    return count;\n  };\n}\n\nconst counterA = makeCounter();\nconst counterB = makeCounter();\n\nconsole.log(counterA()); // 1\nconsole.log(counterA()); // 2\nconsole.log(counterB()); // 1  (separate closure, separate count)",
+    "explanation": "`increment` keeps access to `count` after `makeCounter` has returned. Each call to `makeCounter` creates a new `count` variable, so `counterA` and `counterB` track their counts independently. Nothing outside the closure can change `count` directly."
+  },
+  "promises": {
+    "topic": "Promises",
+    "code": "function wait(ms) {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n\nfunction fetchScore(name) {\n  return new Promise((resolve, reject) => {\n    if (!name) {\n      reject(new Error('A name is required'));\n      return;\n    }\n    wait(100).then(() => resolve({ name, score: 42 }));\n  });\n}\n\nfetchScore('Ada')\n  .then((result) => console.log(result.score)) // 42\n  .catch((error) => console.error(error.message))\n  .finally(() => console.log('done'));",
+    "explanation": "A Promise represents a value that will be available later. `resolve` fulfills it and `reject` marks it as failed. `.then` runs on success, `.catch` handles any rejection earlier in the chain, and `.finally` runs either way."
+  },
+  "array methods": {
+    "topic": "Array methods",
+    "code": "const orders = [\n  { item: 'book', price: 12, shipped: true },\n  { item: 'pen', price: 2, shipped: false },\n  { item: 'lamp', price: 30, shipped: true },\n];\n\nconst shippedNames = orders\n  .filter((order) => order.shipped)\n  .map((order) => order.item);\n\nconst total = orders.reduce((sum, order) => sum + order.price, 0);\n\nconst hasExpensive = orders.some((order) => order.price > 25);\n\nconsole.log(shippedNames); // ['book', 'lamp']\nconsole.log(total);        // 44\nconsole.log(hasExpensive); // true",
+    "explanation": "`filter` keeps elements that pass a test, `map` transforms each element, `reduce` combines elements into one value (always pass an initial value), and `some` checks whether at least one element passes. `filter` and `map` return new arrays and don't change `orders`."
+  },
+  "recursion": {
+    "topic": "Recursion",
+    "code": "function sumNested(values) {\n  let total = 0;\n\n  for (const value of values) {\n    if (Array.isArray(value)) {\n      total += sumNested(value); // recursive case\n    } else {\n      total += value;\n    }\n  }\n\n  return total; // an empty array returns 0 (base case)\n}\n\nconsole.log(sumNested([1, [2, 3], [4, [5]]])); // 15\nconsole.log(sumNested([]));                    // 0",
+    "explanation": "A recursive function calls itself on a smaller piece of the problem. Here, each nested array is summed by a recursive call. The loop ending (no more elements) acts as the base case, so the recursion always stops."
+  },
+  "async/await": {
+    "topic": "Async/await",
+    "code": "function getUser(id) {\n  return new Promise((resolve) =>\n    setTimeout(() => resolve({ id, name: 'Grace' }), 100)\n  );\n}\n\nasync function greetUser(id) {\n  try {\n    const user = await getUser(id);\n    return `Hello, ${user.name}!`;\n  } catch (error) {\n    return `Could not load user: ${error.message}`;\n  }\n}\n\ngreetUser(1).then(console.log); // Hello, Grace!",
+    "explanation": "`async` functions always return a Promise. `await` pauses the function until the Promise settles, letting you write asynchronous code top to bottom. Use `try...catch` to handle rejected Promises. Callers still need `await` or `.then` to get the result."
+  },
+  "objects": {
+    "topic": "Objects",
+    "code": "const book = {\n  title: 'Eloquent Code',\n  author: { name: 'Sam' },\n  describe() {\n    return `${this.title} by ${this.author.name}`;\n  },\n};\n\nconsole.log(book.describe());   // Eloquent Code by Sam\nconsole.log(Object.keys(book)); // ['title', 'author', 'describe']\n\nconst shallowCopy = { ...book };\nshallowCopy.title = 'Copy';\nshallowCopy.author.name = 'Alex'; // shared nested object!\n\nconsole.log(book.title);       // Eloquent Code\nconsole.log(book.author.name); // Alex",
+    "explanation": "Objects store key/value pairs and can hold methods that use `this`. The spread syntax makes a shallow copy: top-level properties are copied, but nested objects are still shared references, so changing `shallowCopy.author` also changes `book.author`."
+  }
+}

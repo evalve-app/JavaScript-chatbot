@@ -1,0 +1,324 @@
+{
+  "description": "Predefined StudyBot questions with expected classifications and objectively checkable expectations. Used to spot genuine LLM failures when prompts or models change. 'history' holds earlier turns for follow-up questions. 'expected_tools' lists tools the tutor should call (empty = no tool required; out-of-scope = must be empty).",
+  "scenarios": [
+    {
+      "id": "cls-01",
+      "category": "classification",
+      "question": "What is the difference between map and forEach in JavaScript?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": [],
+      "checks": ["States that map returns a new array and forEach returns undefined"]
+    },
+    {
+      "id": "cls-02",
+      "category": "classification",
+      "question": "What's a good restaurant in Chicago for deep dish pizza?",
+      "expected": {"scope": "out_of_scope", "intent": "concept", "language": "unknown"},
+      "expected_route": "out_of_scope",
+      "expected_tools": [],
+      "checks": ["Returns the polite JavaScript-only redirect", "No tools are called"]
+    },
+    {
+      "id": "cls-03",
+      "category": "classification",
+      "question": "Should I take ibuprofen or acetaminophen for a headache?",
+      "expected": {"scope": "out_of_scope", "intent": "concept", "language": "unknown"},
+      "expected_route": "out_of_scope",
+      "expected_tools": [],
+      "checks": ["Gives no medical advice", "Returns the polite JavaScript-only redirect"]
+    },
+    {
+      "id": "cls-04",
+      "category": "classification",
+      "question": "How do decorators work in Python?",
+      "expected": {"scope": "out_of_scope", "intent": "concept", "language": "other"},
+      "expected_route": "out_of_scope_other_language",
+      "expected_tools": [],
+      "checks": ["Offers a JavaScript alternative", "Does not give a full Python explanation"]
+    },
+    {
+      "id": "cls-05",
+      "category": "classification",
+      "question": "Write a SQL query that selects all users older than 30.",
+      "expected": {"scope": "out_of_scope", "intent": "code_generation", "language": "other"},
+      "expected_route": "out_of_scope_other_language",
+      "expected_tools": [],
+      "checks": ["Does not write SQL", "Offers a JavaScript alternative"]
+    },
+    {
+      "id": "cls-06",
+      "category": "classification",
+      "question": "How do I reverse a string?",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Defaults to JavaScript", "Answer contains a fenced javascript code block"]
+    },
+    {
+      "id": "cls-07",
+      "category": "classification",
+      "question": "How would I write Python-style list comprehensions in JavaScript?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": [],
+      "checks": ["Shows map/filter (or equivalent) JavaScript code"]
+    },
+    {
+      "id": "cls-08",
+      "category": "classification",
+      "question": "Can you show another example?",
+      "history": [
+        {"role": "user", "content": "Explain JavaScript closures."},
+        {"role": "assistant", "content": "A closure is a function that remembers variables from the scope where it was created..."}
+      ],
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": [],
+      "checks": ["Classified in scope from context", "Gives a new closure example in JavaScript"]
+    },
+    {
+      "id": "cls-09",
+      "category": "classification",
+      "question": "What should I pack for a week in Lisbon?",
+      "history": [
+        {"role": "user", "content": "Explain JavaScript promises."},
+        {"role": "assistant", "content": "A Promise represents a value that may be available later..."}
+      ],
+      "expected": {"scope": "out_of_scope", "intent": "concept", "language": "unknown"},
+      "expected_route": "out_of_scope",
+      "expected_tools": [],
+      "checks": ["Earlier JavaScript context does not make an unrelated question in scope"]
+    },
+    {
+      "id": "con-01",
+      "category": "concept",
+      "question": "Explain JavaScript closures.",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "expected_sources": ["04-javascript-closures.md"],
+      "checks": ["Explains that inner functions keep access to outer variables after the outer function returns", "Includes a JavaScript example"]
+    },
+    {
+      "id": "con-02",
+      "category": "concept",
+      "question": "What is the difference between let, const, and var?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "checks": ["Mentions var is function-scoped and let/const are block-scoped", "Mentions const cannot be reassigned but objects can still be mutated"]
+    },
+    {
+      "id": "con-03",
+      "category": "concept",
+      "question": "Why does console.log(x) print undefined when var x is declared later in the function, but throws for let?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "expected_sources": ["05-javascript-hoisting.md"],
+      "checks": ["Explains hoisting", "Mentions the temporal dead zone for let"]
+    },
+    {
+      "id": "con-04",
+      "category": "concept",
+      "question": "In what order do these log and why? console.log('A'); setTimeout(() => console.log('B'), 0); Promise.resolve().then(() => console.log('C')); console.log('D');",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "expected_sources": ["11-javascript-event-loop.md"],
+      "checks": ["States the order is A, D, C, B", "Explains microtasks run before the timer task"]
+    },
+    {
+      "id": "con-05",
+      "category": "concept",
+      "question": "Why is [] == false true but [] is truthy in JavaScript?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": [],
+      "checks": ["Explains loose equality converts both sides (to numbers via primitives)", "Recommends ===", "States that all objects including [] are truthy"]
+    },
+    {
+      "id": "con-06",
+      "category": "concept",
+      "question": "What are the states of a JavaScript Promise?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "expected_sources": ["09-javascript-promises.md"],
+      "checks": ["Names pending, fulfilled, and rejected"]
+    },
+    {
+      "id": "gen-01",
+      "category": "code_generation",
+      "question": "Write a JavaScript function named removeDuplicates that accepts exactly one array parameter and returns a new array without duplicates. Preserve the original order and do not use Set.",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Function is named removeDuplicates", "Has exactly one parameter", "Does not use Set", "Returns a new array (input not mutated)", "Preserves first-occurrence order"]
+    },
+    {
+      "id": "gen-02",
+      "category": "code_generation",
+      "question": "Write a recursive JavaScript function called flattenArray(arr) that flattens arbitrarily nested arrays. Do not use Array.prototype.flat. Return [] for an empty array.",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Named flattenArray with one parameter arr", "Is recursive", "Does not use .flat", "Returns [] for []"]
+    },
+    {
+      "id": "gen-03",
+      "category": "code_generation",
+      "question": "Implement debounce(fn, wait) in JavaScript. It must return a function, and only call fn after wait milliseconds have passed without another call. Preserve the arguments and this value of the last call.",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Signature is debounce(fn, wait)", "Returns a function", "Uses clearTimeout/setTimeout", "Passes the last call's arguments and this to fn"]
+    },
+    {
+      "id": "gen-04",
+      "category": "code_generation",
+      "question": "Write a JavaScript function sumPositive(numbers) that returns the sum of the positive numbers in the array as a number. Return 0 for an empty array. Do not use reduce.",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Named sumPositive with one parameter numbers", "Returns a number", "Returns 0 for []", "Does not use reduce", "Ignores zero and negative numbers"]
+    },
+    {
+      "id": "gen-05",
+      "category": "code_generation",
+      "question": "Write a JavaScript function isPalindrome(str) that returns true or false. Ignore case and non-alphanumeric characters. An empty string should return true. Do not use the reverse method.",
+      "expected": {"scope": "in_scope", "intent": "code_generation", "language": "javascript"},
+      "expected_route": "code_generation",
+      "expected_tools": [],
+      "checks": ["Named isPalindrome with one parameter str", "Returns a boolean", "Ignores case and punctuation", "Returns true for ''", "Does not use .reverse"]
+    },
+    {
+      "id": "dbg-01",
+      "category": "debugging",
+      "question": "Why does this throw a SyntaxError?\n\nconst greeting = 'Hello, world;\nconsole.log(greeting);",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Identifies the missing closing quotation mark"]
+    },
+    {
+      "id": "dbg-02",
+      "category": "debugging",
+      "question": "What's wrong with this code?\n\nfunction add(a, b {\n  return a + b;\n}",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Identifies the missing closing parenthesis after b"]
+    },
+    {
+      "id": "dbg-03",
+      "category": "debugging",
+      "question": "I get ReferenceError: totl is not defined.\n\nfunction getTotal(prices) {\n  let total = 0;\n  for (const p of prices) {\n    total += p;\n  }\n  return totl;\n}",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Identifies the typo totl vs total", "Fix changes only the return line"]
+    },
+    {
+      "id": "dbg-04",
+      "category": "debugging",
+      "question": "Why does this print NaN?\n\nfunction area(width, height) {\n  return width * height;\n}\nconsole.log(area(5));",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Explains height is undefined because only one argument was passed", "5 * undefined is NaN"]
+    },
+    {
+      "id": "dbg-05",
+      "category": "debugging",
+      "question": "Why is my function returning undefined?\n\nfunction double(n) {\n  n * 2;\n}\nconsole.log(double(4));",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Identifies the missing return statement"]
+    },
+    {
+      "id": "dbg-06",
+      "category": "debugging",
+      "question": "This logs undefined at the end. Why?\n\nconst items = ['a', 'b', 'c'];\nfor (let i = 0; i <= items.length; i++) {\n  console.log(items[i]);\n}",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Identifies the off-by-one error (<= should be <)"]
+    },
+    {
+      "id": "dbg-07",
+      "category": "debugging",
+      "question": "Why does this log Promise { <pending> } instead of the user?\n\nasync function getUser() {\n  const res = await fetch('/api/user');\n  return res.json();\n}\nconst user = getUser();\nconsole.log(user);",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Explains async functions return a Promise", "Fix awaits getUser() or uses .then"]
+    },
+    {
+      "id": "dbg-08",
+      "category": "debugging",
+      "question": "Why does 'All saved' print before the items are saved?\n\nitems.forEach(async (item) => {\n  await saveItem(item);\n});\nconsole.log('All saved');",
+      "expected": {"scope": "in_scope", "intent": "debugging", "language": "javascript"},
+      "expected_route": "debugging",
+      "expected_tools": [],
+      "checks": ["Explains forEach does not wait for async callbacks", "Suggests for...of with await or Promise.all"]
+    },
+    {
+      "id": "quiz-01",
+      "category": "quiz",
+      "question": "Give me three questions about JavaScript promises.",
+      "expected": {"scope": "in_scope", "intent": "quiz", "language": "javascript"},
+      "expected_route": "quiz",
+      "expected_tools": [],
+      "checks": ["Exactly three questions", "Questions are about promises", "Answers are not revealed upfront"]
+    },
+    {
+      "id": "tool-01",
+      "category": "tool_usage",
+      "question": "Search the StudyBot lessons and tell me the common mistakes with async/await.",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["search_lessons"],
+      "expected_sources": ["10-javascript-async-await.md"],
+      "checks": ["Calls search_lessons", "Mentions forgetting await and await inside forEach"]
+    },
+    {
+      "id": "tool-02",
+      "category": "tool_usage",
+      "question": "Show me StudyBot's code example for recursion.",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["get_code_example"],
+      "checks": ["Calls get_code_example with topic recursion", "Shows the sumNested example"]
+    },
+    {
+      "id": "tool-03",
+      "category": "tool_usage",
+      "question": "What JavaScript topic is student-002 working on right now?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["get_mock_progress"],
+      "checks": ["Calls get_mock_progress with student-002", "Answers promises"]
+    },
+    {
+      "id": "tool-04",
+      "category": "tool_usage",
+      "question": "Check student-001's progress, then explain their current topic and show a code example for it.",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["get_mock_progress", "get_code_example"],
+      "checks": ["Calls get_mock_progress for student-001", "Identifies current topic closures", "Calls get_code_example for closures"]
+    },
+    {
+      "id": "tool-05",
+      "category": "tool_usage",
+      "question": "What is student-999's progress?",
+      "expected": {"scope": "in_scope", "intent": "concept", "language": "javascript"},
+      "expected_route": "concept",
+      "expected_tools": ["get_mock_progress"],
+      "checks": ["Calls get_mock_progress", "Says the student was not found instead of inventing progress"]
+    }
+  ]
+}
