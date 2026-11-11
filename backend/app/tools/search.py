@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 def search_lessons(ctx: RunContext[TutorDeps], query: str) -> list[LessonResult]:
-    """Search StudyBot's JavaScript lesson library and return the most relevant passages.
+    """Search StudyBot's lesson library (JavaScript concepts and PEDAC problem-solving guides).
+
+    Returns the most relevant passages.
 
     Returns an empty list if nothing is found or the library is unavailable.
 

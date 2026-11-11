@@ -1,4 +1,4 @@
-"""Replay overrides and tool policies on the real tutor/classifier agents (fake models, fake Kitaru)."""
+"""Replay overrides and tool policies on the real tutor agent (fake models, fake Kitaru)."""
 
 import pytest
 from kitaru.api_models.v1.replay import ToolLookupMatch, ToolLookupResponse
@@ -78,7 +78,7 @@ async def run_tutor(recorder, replay_plan, model, model_factory=None):
     hooks = RecordingHooks(recorder, span, "tutor", replay=replay_plan, model_factory=model_factory)
     try:
         with tutor_agent.override(model=model):
-            return await tutor_agent.run("q", deps=TutorDeps(route="concept"), capabilities=[hooks])
+            return await tutor_agent.run("q", deps=TutorDeps(), capabilities=[hooks])
     finally:
         recorder.end_span(span)
 
@@ -145,7 +145,8 @@ async def test_model_override_really_changes_the_model():
     assert result.output == "from override" and built == ["gpt-4.1-mini"]
     call = next(n for n in only_session(fake)["nodes"].values() if n.node_type.value == "llm_call")
     assert call.requested_model == "gpt-4o-mini"
-    assert call.attributes["override"] == {"model": "gpt-4.1-mini"}
+    assert call.attributes["replay.override"] == {"model": "gpt-4.1-mini"}
+    assert call.name == "chat gpt-4o-mini"  # named after the requested model
 
 
 async def test_model_params_override_reaches_the_model():
@@ -192,7 +193,7 @@ async def test_history_hit_returns_recorded_results_in_order(live_tool_must_not_
     assert result.output == "saw: ['first recording', 'second recording']"
     assert [c[2] for c in lookup.calls] == [0, 1]  # occurrence advances per identical call
     tools = [n for n in only_session(fake)["nodes"].values() if n.node_type.value == "tool_call"]
-    assert all(t.attributes["policy"] == "history" and t.attributes["mocked"] for t in tools)
+    assert all(t.attributes["replay.policy"] == "history" and t.attributes["replay.mocked"] for t in tools)
     # The key Kitaru would compute from the recorded node equals the key we looked up.
     assert compute_tool_cache_key("get_code_example", tools[0].inputs) == KEY
 

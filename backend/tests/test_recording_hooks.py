@@ -5,12 +5,11 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolRetu
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 import app.recording.recorder as rec
-from app.agents.classifier import Classification, classifier_agent
 from app.agents.deps import TutorDeps
 from app.agents.tutor import tutor_agent
 from app.recording.hooks import RecordingHooks
-from tests.fakes import fake_classifier_model, scripted_tutor_model
-from tests.test_recording import FakeKitaru, only_session, recorder_for
+from tests.fakes import scripted_tutor_model
+from tests.test_recording import FakeKitaru, llm_calls, only_session, recorder_for
 
 pytestmark = pytest.mark.anyio
 
@@ -26,48 +25,31 @@ def nodes_by_name(session):
     return {n.name: n for n in session["nodes"].values()}
 
 
-async def test_classifier_and_tutor_land_under_their_spans(ingested_lessons):
+async def test_tutor_calls_land_under_its_span(ingested_lessons):
     fake = FakeKitaru()
     recorder = recorder_for(fake, secrets=[])
     await recorder.start(question="Explain closures", history=[])
 
-    span = recorder.begin_span("classify", inputs={"question": "Explain closures"})
-    with classifier_agent.override(model=fake_classifier_model("in_scope", "concept", "javascript")):
-        result = await classifier_agent.run(
-            "Explain closures", capabilities=[RecordingHooks(recorder, span, "classifier")]
-        )
-    recorder.end_span(span, outputs={**result.output.model_dump(), "route": "concept"})
-
-    span = recorder.begin_span("tutor", inputs={"route": "concept"})
+    span = recorder.begin_span("tutor", inputs={"question": "Explain closures"})
     tutor_model = scripted_tutor_model([("search_lessons", {"query": "closures"})], "Closures remember.")
     with tutor_agent.override(model=tutor_model):
         answer = await tutor_agent.run(
             "Explain closures",
-            deps=TutorDeps(route="concept"),
+            deps=TutorDeps(),
             capabilities=[RecordingHooks(recorder, span, "tutor")],
         )
     recorder.end_span(span, outputs={"answer": answer.output})
     await recorder.finish(answer=answer.output)
 
-    # Recording didn't change what the agents returned.
-    assert result.output == Classification(scope="in_scope", intent="concept", language="javascript")
+    # Recording didn't change what the agent returned.
     assert answer.output == "Closures remember."
 
     s = only_session(fake)
     nodes = list(s["nodes"].values())
-    classify = next(n for n in nodes if n.name == "classify")
     tutor = next(n for n in nodes if n.name == "tutor")
-    assert classify.status.value == tutor.status.value == "completed"
-    assert classify.outputs["route"] == "concept"
+    assert tutor.status.value == "completed"
 
-    classifier_calls = [n for n in nodes if n.name == "classifier.model_request"]
-    assert len(classifier_calls) == 1
-    assert classifier_calls[0].parent_external_id == classify.external_id
-    assert classifier_calls[0].node_type.value == "llm_call"
-    assert "You classify messages sent to StudyBot" in classifier_calls[0].inputs["instructions"]
-    assert classifier_calls[0].system_prompt_selector == "/instructions"
-
-    tutor_calls = [n for n in nodes if n.name == "tutor.model_request"]
+    tutor_calls = llm_calls(s, "tutor")
     tools = [n for n in nodes if n.node_type.value == "tool_call"]
     assert len(tutor_calls) == 2 and len(tools) == 1
     assert all(n.parent_external_id == tutor.external_id for n in tutor_calls + tools)
@@ -113,7 +95,7 @@ async def test_failing_tool_is_recorded_and_error_still_raised():
         with tutor_agent.override(model=FunctionModel(respond)):
             with pytest.raises(RuntimeError, match="database down"):
                 await tutor_agent.run(
-                    "progress?", deps=TutorDeps(route="concept"), capabilities=[RecordingHooks(recorder, span, "tutor")]
+                    "progress?", deps=TutorDeps(), capabilities=[RecordingHooks(recorder, span, "tutor")]
                 )
     finally:
         progress.new_session = original
@@ -130,18 +112,18 @@ async def test_failing_model_call_is_recorded():
     fake = FakeKitaru()
     recorder = recorder_for(fake, secrets=[])
     await recorder.start(question="q", history=[])
-    span = recorder.begin_span("classify")
+    span = recorder.begin_span("tutor")
 
     def broken(messages, info):
         raise ConnectionError("OpenAI unreachable")
 
-    with classifier_agent.override(model=FunctionModel(broken)):
+    with tutor_agent.override(model=FunctionModel(broken)):
         with pytest.raises(ConnectionError):
-            await classifier_agent.run("q", capabilities=[RecordingHooks(recorder, span, "classifier")])
+            await tutor_agent.run("q", deps=TutorDeps(), capabilities=[RecordingHooks(recorder, span, "tutor")])
     recorder.end_span(span, error=ConnectionError("OpenAI unreachable"))
     await recorder.finish(error=ConnectionError("OpenAI unreachable"))
 
-    call = nodes_by_name(only_session(fake))["classifier.model_request"]
+    (call,) = llm_calls(only_session(fake), "tutor")
     assert call.status.value == "failed" and "OpenAI unreachable" in call.error
 
 
@@ -149,9 +131,9 @@ async def test_hooks_with_disabled_recorder_change_nothing():
     from app.recording.recorder import TurnRecorder
 
     recorder = TurnRecorder(None, [])
-    with classifier_agent.override(model=fake_classifier_model("out_of_scope", "concept", "unknown")):
-        result = await classifier_agent.run("pizza?", capabilities=[RecordingHooks(recorder, "x", "classifier")])
-    assert result.output.scope == "out_of_scope"
+    with tutor_agent.override(model=scripted_tutor_model(answer="plain answer")):
+        result = await tutor_agent.run("pizza?", deps=TutorDeps(), capabilities=[RecordingHooks(recorder, "x", "tutor")])
+    assert result.output == "plain answer"
 
 
 async def test_history_messages_are_projected_in_model_inputs():
@@ -168,14 +150,14 @@ async def test_history_messages_are_projected_in_model_inputs():
     with tutor_agent.override(model=scripted_tutor_model(answer="Here's another")):
         await tutor_agent.run(
             "another?",
-            deps=TutorDeps(route="concept"),
+            deps=TutorDeps(),
             message_history=history,
             capabilities=[RecordingHooks(recorder, span, "tutor")],
         )
     recorder.end_span(span)
     await recorder.finish(answer="Here's another")
 
-    call = nodes_by_name(only_session(fake))["tutor.model_request"]
+    (call,) = llm_calls(only_session(fake), "tutor")
     kinds = [(m["kind"], m["parts"][0]["type"]) for m in call.inputs["messages"]]
     assert kinds == [("request", "user-prompt"), ("response", "text"), ("request", "user-prompt")]
     # The selector points at the NEW question, not the old one.

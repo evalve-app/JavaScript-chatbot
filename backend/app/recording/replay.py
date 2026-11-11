@@ -5,8 +5,7 @@ What StudyBot supports (checked up front by `ReplayPlan.check`, before any model
     override.model         str (every model call) or {old: new} map. OpenAI models only.
     override.model_params  temperature, top_p, max_tokens, seed
     override.prompt        replaces the user's question for the whole turn
-    override.system_prompt replaces the TUTOR's prompt (the one-line task label stays).
-                           The classifier prompt changes through a new agent version.
+    override.system_prompt replaces the tutor's whole prompt (scope, task rules, tools guidance).
 
     tool policy            passthrough | history | static, on_miss fail | error_result | passthrough
                            llm is rejected.

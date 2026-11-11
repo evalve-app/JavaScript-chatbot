@@ -5,8 +5,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.agents.classifier import Classification
-
 
 class LoginRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=50)
@@ -31,8 +29,6 @@ class RunDetails(BaseModel):
     """Developer details shown under each assistant message."""
 
     request_id: uuid.UUID
-    classification: Classification | None
-    route: str | None
     tools_called: list[str]
     sources: list[Source]
     duration_ms: int
@@ -47,8 +43,6 @@ class ChatResponse(BaseModel):
     message_id: uuid.UUID
     request_id: uuid.UUID
     response: str
-    classification: Classification
-    route: str
     tools_called: list[str]
     sources: list[Source]
     duration_ms: int

@@ -87,8 +87,7 @@ def test_chat_creates_conversation_and_persists(client, ingested_lessons):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["response"] == "A closure is..."
-    assert data["classification"] == {"scope": "in_scope", "intent": "concept", "language": "javascript"}
-    assert data["route"] == "concept"
+    assert "classification" not in data and "route" not in data
     assert data["tools_called"] == ["search_lessons"]
     assert any(s["source_filename"] == "04-javascript-closures.md" for s in data["sources"])
     assert data["duration_ms"] >= 0
@@ -141,13 +140,13 @@ def test_teammates_cannot_see_each_others_conversations(client):
 def test_chat_failure_returns_502_with_request_id(client):
     from pydantic_ai.models.function import FunctionModel
 
-    from app.agents.classifier import classifier_agent
+    from app.agents.tutor import tutor_agent
 
     def broken(messages, info):
         raise RuntimeError("OpenAI is down")
 
     login(client)
-    with classifier_agent.override(model=FunctionModel(broken)):
+    with tutor_agent.override(model=FunctionModel(broken)):
         response = client.post("/api/chat", json={"message": "Explain closures"})
     assert response.status_code == 502
     body = response.json()
