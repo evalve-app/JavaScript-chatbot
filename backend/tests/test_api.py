@@ -92,6 +92,7 @@ def test_chat_creates_conversation_and_persists(client, ingested_lessons):
     assert data["tools_called"] == ["search_lessons"]
     assert any(s["source_filename"] == "04-javascript-closures.md" for s in data["sources"])
     assert data["duration_ms"] >= 0
+    assert data["kitaru_status"] == "disabled" and data["kitaru_session_id"] is None
 
     conversations = client.get("/api/conversations").json()
     assert [c["id"] for c in conversations] == [data["conversation_id"]]
@@ -102,6 +103,7 @@ def test_chat_creates_conversation_and_persists(client, ingested_lessons):
     details = detail["messages"][1]["details"]
     assert details["request_id"] == data["request_id"]
     assert details["tools_called"] == ["search_lessons"]
+    assert details["kitaru_status"] == "disabled"
     assert detail["messages"][0]["details"] is None
 
 

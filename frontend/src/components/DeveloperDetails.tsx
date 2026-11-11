@@ -13,6 +13,9 @@ export default function DeveloperDetails({ details }: { details: RunDetails }) {
     ['Request ID', details.request_id],
   ]
   if (details.model_name) rows.splice(7, 0, ['Model', details.model_name])
+  if (details.kitaru_status) rows.push(['Kitaru', details.kitaru_status])
+  if (details.kitaru_session_id) rows.push(['Kitaru session', details.kitaru_session_id])
+  if (details.kitaru_problem) rows.push(['Kitaru problem', details.kitaru_problem])
 
   return (
     <details className="dev-details">

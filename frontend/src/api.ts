@@ -17,6 +17,9 @@ export type RunDetails = {
   sources: Source[]
   duration_ms: number
   model_name: string
+  kitaru_status?: string | null
+  kitaru_session_id?: string | null
+  kitaru_problem?: string | null
 }
 
 export type Member = { id: string; display_name: string }
@@ -42,6 +45,8 @@ export type ChatResponse = {
   tools_called: string[]
   sources: Source[]
   duration_ms: number
+  kitaru_status: string
+  kitaru_session_id: string | null
 }
 
 export class ApiError extends Error {

@@ -120,6 +120,9 @@ def run_details(run: AgentRun) -> RunDetails:
         sources=[Source(**s) for s in run.retrieved_sources or []],
         duration_ms=run.duration_ms,
         model_name=run.model_name,
+        kitaru_status=run.kitaru_status,
+        kitaru_session_id=run.kitaru_session_id,
+        kitaru_problem=run.kitaru_problem,
     )
 
 
@@ -194,4 +197,6 @@ async def chat(
         tools_called=result.tools_called,
         sources=[Source(**s) for s in result.sources],
         duration_ms=result.duration_ms,
+        kitaru_status=result.kitaru_status,
+        kitaru_session_id=result.kitaru_session_id,
     )

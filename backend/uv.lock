@@ -292,6 +292,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kitaru"
+version = "0.27.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/ae/72442c874a48564949560b45630af48e0d39271315cfb1be51111c8fc295/kitaru-0.27.2.tar.gz", hash = "sha256:e83d85a28f33cea3ecfcd33ae305432210a43e3fc92367d8f9aaf1924f20ddd7", size = 6908036, upload-time = "2026-10-08T14:53:22.625Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/9e/dc30822e75c6bd371f55a0f507964fe2b5ea78e1f9fecc34faa98d2a42ec/kitaru-0.27.2-py3-none-any.whl", hash = "sha256:2448b1755af1c924413399feac0547ff7df8697fd7f7a77cf4e34f1315fbf938", size = 3415049, upload-time = "2026-10-08T14:53:20.22Z" },
+]
+
+[[package]]
 name = "logfire-api"
 version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -634,6 +647,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "itsdangerous" },
+    { name = "kitaru" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai-slim", extra = ["openai"] },
@@ -654,6 +668,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = "==0.162.4" },
     { name = "itsdangerous", specifier = "==2.2.0" },
+    { name = "kitaru", specifier = "==0.27.2" },
     { name = "pgvector", specifier = "==0.5.1" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.8" },
     { name = "pydantic-ai-slim", extras = ["openai"], specifier = "==2.66.0" },

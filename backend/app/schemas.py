@@ -37,6 +37,9 @@ class RunDetails(BaseModel):
     sources: list[Source]
     duration_ms: int
     model_name: str
+    kitaru_status: str | None = None
+    kitaru_session_id: uuid.UUID | None = None
+    kitaru_problem: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -49,6 +52,8 @@ class ChatResponse(BaseModel):
     tools_called: list[str]
     sources: list[Source]
     duration_ms: int
+    kitaru_status: str
+    kitaru_session_id: uuid.UUID | None = None
 
 
 class ConversationSummary(BaseModel):

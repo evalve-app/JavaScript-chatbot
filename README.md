@@ -1,6 +1,6 @@
 # StudyBot
 
-StudyBot is a chat assistant for learning JavaScript. It explains concepts, finds bugs, writes code, and runs quizzes. Each teammate runs it on their own laptop with their own OpenAI key, and everyone's chats are saved to one shared Neon database. Later we'll use it to test Kitaru (not connected yet).
+StudyBot is a chat assistant for learning JavaScript. It explains concepts, finds bugs, writes code, and runs quizzes. Each teammate runs it on their own laptop with their own OpenAI key, and everyone's chats are saved to one shared Neon database. Each turn can be recorded to Kitaru for replay and testing.
 
 Built with React and Vite on the front end, FastAPI and PydanticAI on the back end, OpenAI models, and Neon PostgreSQL with pgvector.
 
@@ -79,6 +79,10 @@ psql -d studybot_test -c "CREATE EXTENSION IF NOT EXISTS vector"
 cd backend && uv run pytest -q
 ```
 
+## Kitaru
+
+Recording and replay are optional and off by default. Setup and what a replay can change: [docs/kitaru.md](docs/kitaru.md).
+
 ## Not built yet, on purpose
 
-Kitaru, cloud hosting, streaming replies, passwords or user accounts, database migrations, and an automatic answer checker.
+Cloud hosting, streaming replies, passwords or user accounts, database migrations, and an automatic answer checker.

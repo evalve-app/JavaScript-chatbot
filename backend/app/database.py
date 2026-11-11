@@ -44,3 +44,15 @@ def create_tables() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(engine)
+    # create_all never alters existing tables; add columns introduced after the first deploy.
+    with engine.begin() as conn:
+        for statement in ADDED_COLUMNS:
+            conn.execute(text(statement))
+
+
+# Safe to run repeatedly on the shared database.
+ADDED_COLUMNS = [
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS kitaru_status VARCHAR(20)",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS kitaru_session_id UUID",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS kitaru_problem TEXT",
+]

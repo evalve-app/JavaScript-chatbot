@@ -5,6 +5,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.162.4",
     "itsdangerous==2.2.0",
+    "kitaru==0.27.2",
     "pgvector==0.5.1",
     "psycopg[binary]==3.3.8",
     "pydantic-ai-slim[openai]==2.66.0",

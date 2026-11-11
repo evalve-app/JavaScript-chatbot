@@ -5,7 +5,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 
-from app.agents.prompts import OTHER_LANGUAGE_RESPONSE, OUT_OF_SCOPE_RESPONSE, ROUTE_INSTRUCTIONS
+from app.agents.prompts import OTHER_LANGUAGE_RESPONSE, OUT_OF_SCOPE_RESPONSE, TUTOR_SYSTEM_PROMPT
 from app.agents.tutor import tutor_agent
 from app.agents.workflow import WorkflowError, run_chat_turn
 from app.models import AgentRun, Conversation, Message, TeamMember
@@ -64,8 +64,10 @@ async def test_in_scope_routes_to_tutor_with_route_instructions(db, conversation
 
     assert result.route == intent
     assert result.response == "ok"
-    assert ROUTE_INSTRUCTIONS[intent] in seen["instructions"]
-    assert "You are StudyBot" in seen["instructions"]
+    # One big prompt with every task's rules, then a one-line label for this route.
+    assert seen["instructions"].startswith(TUTOR_SYSTEM_PROMPT.strip()[:40])
+    assert "### Task Rules" in seen["instructions"]
+    assert seen["instructions"].rstrip().endswith(f"Current task: {intent}")
 
 
 async def test_turn_persists_messages_run_log_and_title(db, conversation, ingested_lessons):

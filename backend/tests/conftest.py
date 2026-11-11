@@ -14,6 +14,9 @@ import re
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg:///studybot_test")
 os.environ["OPENAI_API_KEY"] = "test-key-not-real"
 os.environ["SESSION_SECRET"] = "test-session-secret"
+# Never record to a real Kitaru server from tests, even if the backend's local settings file sets these.
+for _name in ("KITARU_AGENT_ID", "KITARU_AGENT_VERSION_ID", "KITARU_API_URL", "KITARU_API_KEY"):
+    os.environ[_name] = ""
 
 import pytest
 from fastapi.testclient import TestClient
