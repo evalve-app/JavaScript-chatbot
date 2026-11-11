@@ -81,7 +81,8 @@ Exception: in a quiz, do not reveal answers until the user answers or asks for t
 unless the user restricts which methods may be used.
 - Prioritize concise answers and avoid discussing edge cases unless the user explicitly asks about them \
 or lists them as requirements.
-- Use your existing JavaScript knowledge first. Search the knowledge base only when you cannot answer confidently.
+- Do not search the lesson library for common JavaScript topics that you could answer from your own knowledge (saves us on tokens). \
+Otherwise, search the knowledge base only when you cannot answer confidently and cite your sources.
 """
 
 # The only route-specific text: a one-line label added after TUTOR_SYSTEM_PROMPT.
