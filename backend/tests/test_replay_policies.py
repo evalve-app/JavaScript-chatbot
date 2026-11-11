@@ -1,4 +1,4 @@
-"""Replay overrides and tool policies on the real tutor/classifier agents (fake models, fake Kitaru)."""
+"""Replay overrides and tool policies on the real tutor agent (fake models, fake Kitaru)."""
 
 import pytest
 from kitaru.api_models.v1.replay import ToolLookupMatch, ToolLookupResponse
@@ -78,7 +78,7 @@ async def run_tutor(recorder, replay_plan, model, model_factory=None):
     hooks = RecordingHooks(recorder, span, "tutor", replay=replay_plan, model_factory=model_factory)
     try:
         with tutor_agent.override(model=model):
-            return await tutor_agent.run("q", deps=TutorDeps(route="concept"), capabilities=[hooks])
+            return await tutor_agent.run("q", deps=TutorDeps(), capabilities=[hooks])
     finally:
         recorder.end_span(span)
 

@@ -6,10 +6,9 @@ Built with React and Vite on the front end, FastAPI and PydanticAI on the back e
 
 ## How a message is handled
 
-1. A classifier agent decides whether the question is about JavaScript and what kind it is: concept, debugging, code generation, or quiz.
-2. Off-topic questions get a fixed, polite reply. Nothing else runs.
-3. JavaScript questions go to the tutor agent. It can search the lesson library, fetch a code example, or look up a mock student's progress.
-4. The question, the answer, and a log of what happened are saved to the database.
+1. Every question goes to one tutor agent. Its prompt tells it what counts as JavaScript, how to redirect off-topic questions, and which rules to follow for each kind of question (concept, debugging, code generation, quiz).
+2. The tutor can search the lesson library, fetch a code example, or look up a mock student's progress.
+3. The question, the answer, and a log of what happened are saved to the database.
 
 ## Where to change things
 

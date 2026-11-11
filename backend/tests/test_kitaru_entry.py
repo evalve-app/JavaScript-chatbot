@@ -202,7 +202,7 @@ async def test_override_prompt_and_model_reach_the_run(monkeypatch):
     monkeypatch.setattr("app.agents.models.chat_model_named", lambda name: swapped)
     fake = FakeWorkerKitaru(
         RECORDED_INPUTS,
-        # Map only the tutor's model; the classifier's model (named "test") is left alone.
+        # A {old: new} map swaps only the model with that name.
         replay=replay(override=ReplayOverride(prompt="Explain closures simply", model={"gpt-4o-mini": "gpt-4.1-mini"})),
     )
     original = FunctionModel(lambda m, i: ModelResponse(parts=[TextPart("from original")]), model_name="gpt-4o-mini")
@@ -211,13 +211,11 @@ async def test_override_prompt_and_model_reach_the_run(monkeypatch):
             assert await run_task(TASK_ID, fake.client) == EXIT_OK
     s = only_session(fake)
     assert s["updates"][-1].outputs == {"answer": "from gpt-4.1-mini"}
-    classify = node_named(s, "invoke_agent classifier")
-    assert classify.inputs == {"question": "Explain closures simply"}
+    tutor = node_named(s, "invoke_agent tutor")
+    assert tutor.inputs == {"question": "Explain closures simply"}
     (tutor_call,) = llm_calls(s, "tutor")
     assert tutor_call.requested_model == "gpt-4o-mini"
     assert tutor_call.attributes["replay.override"] == {"model": "gpt-4.1-mini"}
-    (classifier_call,) = llm_calls(s, "classifier")
-    assert "replay.override" not in classifier_call.attributes
 
 
 def test_question_and_history_formats():

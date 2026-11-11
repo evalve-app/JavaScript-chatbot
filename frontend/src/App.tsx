@@ -83,8 +83,6 @@ export default function App() {
           content: result.response,
           details: {
             request_id: result.request_id,
-            classification: result.classification,
-            route: result.route,
             tools_called: result.tools_called,
             sources: result.sources,
             duration_ms: result.duration_ms,

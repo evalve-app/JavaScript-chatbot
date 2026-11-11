@@ -4,19 +4,18 @@ import uuid
 
 import pytest
 from kitaru.api_models.v1.replay_config import PassthroughConfig, ReplayOverride, ToolPolicy
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import func, select
 
 import app.agents.workflow as workflow
 import app.recording.recorder as rec
-from app.agents.classifier import classifier_agent
-from app.agents.prompts import OUT_OF_SCOPE_RESPONSE
+from app.agents.prompts import TUTOR_SYSTEM_PROMPT
 from app.agents.tutor import tutor_agent
 from app.agents.workflow import TurnFailed, WorkflowError, answer_turn, run_chat_turn
 from app.models import AgentRun, Conversation, Message, TeamMember
 from app.recording.replay import ReplayPlan
-from tests.fakes import fake_agents, fake_classifier_model
+from tests.fakes import fake_agents
 from tests.test_recording import FakeKitaru, node_named, only_session, recorder_for
 
 pytestmark = pytest.mark.anyio
@@ -70,7 +69,7 @@ async def test_answer_turn_writes_nothing_to_the_database(db):
     before = db.scalar(select(func.count()).select_from(Message))
     with fake_agents(answer="hi"):
         answer = await answer_turn("Explain closures", [])
-    assert answer.response == "hi" and answer.route == "concept"
+    assert answer.response == "hi"
     assert db.scalar(select(func.count()).select_from(Message)) == before
     assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
 
@@ -95,88 +94,55 @@ async def test_answer_turn_records_the_agreed_tree():
     assert tree == sorted(
         [
             ("-", "invoke_agent studybot"),
-            ("invoke_agent studybot", "invoke_agent classifier"),
-            ("invoke_agent classifier", "chat by classifier"),
-            ("invoke_agent studybot", "route"),
             ("invoke_agent studybot", "invoke_agent tutor"),
             ("invoke_agent tutor", "chat by tutor"),
             ("invoke_agent tutor", "execute_tool get_code_example"),
             ("invoke_agent tutor", "chat by tutor"),
         ]
     )
-    classify = node_named(s, "invoke_agent classifier")
-    assert classify.attributes == {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "classifier"}
-    assert classify.outputs == {"scope": "in_scope", "intent": "concept", "language": "javascript", "route": "concept"}
-    route = node_named(s, "route")
-    assert route.inputs == {"scope": "in_scope", "intent": "concept", "language": "javascript"}
-    assert route.outputs == {"route": "concept", "handler": "tutor"}
+    tutor = node_named(s, "invoke_agent tutor")
+    assert tutor.attributes == {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "tutor"}
+    assert tutor.inputs == {"question": "Explain closures"}
+    assert tutor.outputs == {"answer": "Closures!"}
 
 
-async def test_out_of_scope_turn_has_no_tutor_span():
-    fake = FakeKitaru()
-    recorder = recorder_for(fake, secrets=[])
-    await recorder.start(question="pizza?", history=[])
-    with fake_agents(classification=("out_of_scope", "concept", "unknown")):
-        answer = await answer_turn("pizza?", [], recorder=recorder)
-    await recorder.finish(answer=answer.response)
-    assert answer.response == OUT_OF_SCOPE_RESPONSE
-    s = only_session(fake)
-    assert "invoke_agent tutor" not in names(s)
-    route = node_named(s, "route")
-    assert route.outputs == {"route": "out_of_scope", "handler": "canned_reply", "response": OUT_OF_SCOPE_RESPONSE}
-    assert route.attributes == {"studybot.route": "out_of_scope", "studybot.handler": "canned_reply"}
-
-
-async def test_prompt_override_changes_the_question_for_both_agents():
+async def test_prompt_override_changes_the_question():
     seen = {}
-
-    def classifier(messages, info: AgentInfo):
-        seen["classifier"] = messages[-1].parts[-1].content
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, {"scope": "in_scope", "intent": "concept", "language": "javascript"})]
-        )
 
     def tutor(messages, info: AgentInfo):
         seen["tutor"] = messages[-1].parts[-1].content
         return ModelResponse(parts=[TextPart("ok")])
 
-    with classifier_agent.override(model=FunctionModel(classifier)), tutor_agent.override(model=FunctionModel(tutor)):
+    with tutor_agent.override(model=FunctionModel(tutor)):
         answer = await answer_turn("original question", [], replay=replay_plan(prompt="NEW question"))
-    assert "NEW question" in seen["classifier"] and "original" not in seen["classifier"]
     assert seen["tutor"] == "NEW question"
     assert answer.question == "NEW question"
 
 
-async def test_system_prompt_override_replaces_only_the_tutor_prompt():
+async def test_system_prompt_override_replaces_the_whole_tutor_prompt():
     seen = {}
 
     def tutor(messages, info: AgentInfo):
         seen["tutor"] = info.instructions
         return ModelResponse(parts=[TextPart("ok")])
 
-    def classifier(messages, info: AgentInfo):
-        seen["classifier"] = info.instructions
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, {"scope": "in_scope", "intent": "quiz", "language": "javascript"})]
-        )
-
-    with classifier_agent.override(model=FunctionModel(classifier)), tutor_agent.override(model=FunctionModel(tutor)):
+    with tutor_agent.override(model=FunctionModel(tutor)):
         await answer_turn("Quiz me", [], replay=replay_plan(system_prompt="BE VERY BRIEF."))
-    assert seen["tutor"] == "BE VERY BRIEF.\n\nCurrent task: quiz"  # big prompt replaced, label kept
-    assert "You classify messages sent to StudyBot" in seen["classifier"]  # classifier untouched
+    assert seen["tutor"] == "BE VERY BRIEF."  # nothing else is appended
+    with tutor_agent.override(model=FunctionModel(tutor)):
+        await answer_turn("Quiz me", [])
+    assert seen["tutor"].strip() == TUTOR_SYSTEM_PROMPT.strip()  # the override did not stick
 
 
 async def test_failure_reports_how_far_the_turn_got():
     def broken(messages, info):
         raise RuntimeError("tutor down")
 
-    with (
-        classifier_agent.override(model=fake_classifier_model("in_scope", "debugging", "javascript")),
-        tutor_agent.override(model=FunctionModel(broken)),
-    ):
+    with tutor_agent.override(model=FunctionModel(broken)):
         with pytest.raises(TurnFailed) as exc_info:
             await answer_turn("why undefined?", [])
-    assert exc_info.value.partial.route == "debugging"
+    assert exc_info.value.partial.question == "why undefined?"
+    assert exc_info.value.partial.response is None
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
@@ -222,10 +188,7 @@ async def test_failed_live_turn_records_failed_session(db, conversation, recordi
     def broken(messages, info):
         raise RuntimeError("tutor down")
 
-    with (
-        classifier_agent.override(model=fake_classifier_model("in_scope", "concept", "javascript")),
-        tutor_agent.override(model=FunctionModel(broken)),
-    ):
+    with tutor_agent.override(model=FunctionModel(broken)):
         with pytest.raises(WorkflowError):
             await run_chat_turn(db, conversation, "Explain closures")
 
@@ -235,7 +198,7 @@ async def test_failed_live_turn_records_failed_session(db, conversation, recordi
     tutor_span = node_named(s, "invoke_agent tutor")
     assert tutor_span.status.value == "failed"
     run = db.scalar(select(AgentRun))
-    assert run.selected_route == "concept" and "tutor down" in run.error_message
+    assert "tutor down" in run.error_message
 
 
 # ---------- Step 5: outcome is stored and shown ----------

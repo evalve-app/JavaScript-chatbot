@@ -6,9 +6,7 @@ StudyBot records each chat turn as one Kitaru session, and Kitaru can replay tho
 
 ```
 invoke_agent studybot                    span      inputs: {"turns": [..., {"inputs": question}]}
-├─ invoke_agent classifier               span      outputs: scope, intent, language, route
-│  └─ chat gpt-4o-mini                   llm_call
-└─ invoke_agent tutor                    span      (JavaScript questions only)
+└─ invoke_agent tutor                    span      inputs: question; outputs: answer
    ├─ chat gpt-4o-mini                   llm_call
    ├─ execute_tool search_lessons        tool_call full lesson text
    │  └─ retrieve lessons                span      pgvector search: document ids + scores
@@ -29,7 +27,7 @@ kitaru agent register studybot \
   --command "uv run python -m app.kitaru_entry" \
   --working-dir "$PWD" \
   --timeout-seconds 300 \
-  --description "StudyBot JavaScript tutor: classifier + tutor agents"
+  --description "StudyBot JavaScript tutor: one tutor agent with tools"
 kitaru agent list          # copy the studybot id
 ```
 
@@ -52,12 +50,10 @@ Try the entry script without Kitaru: `uv run python -m app.kitaru_entry "Explain
 
 | Override | Effect |
 |---|---|
-| `model` | A string swaps every model call, including the classifier. Use a map such as `{"gpt-4o-mini": "gpt-4.1-mini"}` to target one model. OpenAI models only. |
+| `model` | A string swaps every model call. Use a map such as `{"gpt-4o-mini": "gpt-4.1-mini"}` to target one model. OpenAI models only. |
 | `model_params` | `temperature`, `top_p`, `max_tokens`, `seed` |
 | `prompt` | Replaces the question for the whole turn |
-| `system_prompt` | Replaces the tutor's prompt. The `Current task:` line stays. |
-
-Classifier prompt changes need a new agent version (below).
+| `system_prompt` | Replaces the tutor's whole prompt, including scope and task rules. |
 
 | Tool policy | Effect |
 |---|---|
@@ -74,7 +70,7 @@ An experiment replays a group of recorded turns (a cohort) with one change, scor
 
 ### Override or new version?
 
-Use an override for the model, `model_params`, the question, or the tutor's prompt. Anything else needs a new agent version: classifier prompt changes, routing, tools, lessons, any code.
+Use an override for the model, `model_params`, the question, or the tutor's prompt. Anything else needs a new agent version: tools, lessons, any code.
 
 ### Make a candidate version
 

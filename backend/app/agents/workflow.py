@@ -1,4 +1,4 @@
-"""Orchestration: classify -> route -> tutor (with tools), recorded to Kitaru when enabled.
+"""Orchestration: one tutor agent (with tools), recorded to Kitaru when enabled.
 
 Two layers, both independent of FastAPI:
 - answer_turn():   the agent work only. No database writes, so Kitaru replays can reuse it.
@@ -15,10 +15,8 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents.classifier import Classification, build_classifier_input, classifier_agent
 from app.agents.deps import TutorDeps
 from app.agents.models import get_chat_model
-from app.agents.prompts import OTHER_LANGUAGE_RESPONSE, OUT_OF_SCOPE_RESPONSE
 from app.agents.tutor import tutor_agent, tutor_prompt_override
 from app.config import get_settings
 from app.models import AgentRun, Conversation, Message
@@ -37,8 +35,6 @@ class WorkflowResult:
     request_id: uuid.UUID
     message_id: uuid.UUID
     response: str
-    classification: Classification
-    route: str
     tools_called: list[str] = field(default_factory=list)
     sources: list[dict] = field(default_factory=list)
     duration_ms: int = 0
@@ -50,12 +46,6 @@ class WorkflowError(Exception):
     def __init__(self, request_id: uuid.UUID, message: str):
         super().__init__(message)
         self.request_id = request_id
-
-
-def select_route(classification: Classification) -> str:
-    if classification.scope == "out_of_scope":
-        return "out_of_scope_other_language" if classification.language == "other" else "out_of_scope"
-    return classification.intent
 
 
 def load_recent_history(db: Session, conversation_id: uuid.UUID, limit: int) -> list[tuple[str, str]]:
@@ -103,30 +93,9 @@ class TurnAnswer:
     """What answer_turn produced. Filled step by step, so a failure still shows how far it got."""
 
     question: str
-    classification: Classification | None = None
-    route: str | None = None
     response: str | None = None
     tools_called: list[str] = field(default_factory=list)
     sources: list[dict] = field(default_factory=list)
-
-
-CANNED_RESPONSES = {"out_of_scope": OUT_OF_SCOPE_RESPONSE, "out_of_scope_other_language": OTHER_LANGUAGE_RESPONSE}
-
-
-def record_route(recorder: TurnRecorder, classification: Classification, route: str) -> None:
-    """A `route` step: which handler the classification picked, and the canned reply if any."""
-    canned = CANNED_RESPONSES.get(route)
-    outputs = {"route": route, "handler": "canned_reply" if canned else "tutor"}
-    if canned:
-        outputs["response"] = canned
-    recorder.add_node(
-        node_type=NodeType.SPAN,
-        name="route",
-        started_at=utcnow(),
-        inputs=classification.model_dump(),
-        outputs=outputs,
-        attributes={"studybot.route": route, "studybot.handler": outputs["handler"]},
-    )
 
 
 def record_history_load(
@@ -167,7 +136,7 @@ async def answer_turn(
     recorder: TurnRecorder | None = None,
     replay: ReplayPlan | None = None,
 ) -> TurnAnswer:
-    """Classify, route, and (for JavaScript questions) run the tutor. No database writes."""
+    """Run the tutor (it decides scope and task itself). No database writes."""
     recorder = recorder or TurnRecorder(None, [])
     override = replay.override if replay else None
     if override and override.prompt:
@@ -176,43 +145,25 @@ async def answer_turn(
     answer = TurnAnswer(question=question)
     span = None
     try:
-        # 1. Classify scope + intent in one call.
         span = recorder.begin_span(
-            "invoke_agent classifier", inputs={"question": question}, attributes=agent_attributes("classifier")
+            "invoke_agent tutor", inputs={"question": question}, attributes=agent_attributes("tutor")
         )
-        hooks = RecordingHooks(recorder, span, "classifier", replay=replay)
-        result = await classifier_agent.run(
-            build_classifier_input(question, history), model=model, capabilities=[hooks]
-        )
-        answer.classification = result.output
-        answer.route = select_route(answer.classification)
-        recorder.end_span(span, outputs={**answer.classification.model_dump(), "route": answer.route})
-        span = None
-        record_route(recorder, answer.classification, answer.route)
-
-        # 2. Route. Out-of-scope requests never reach RAG or the tutor.
-        if answer.route in CANNED_RESPONSES:
-            answer.response = CANNED_RESPONSES[answer.route]
-        else:
-            span = recorder.begin_span(
-                "invoke_agent tutor", inputs={"route": answer.route}, attributes=agent_attributes("tutor")
-            )
-            deps = TutorDeps(route=answer.route)
-            hooks = RecordingHooks(recorder, span, "tutor", replay=replay)
-            try:
-                with tutor_prompt_override(override.system_prompt if override else None):
-                    result = await tutor_agent.run(
-                        question,
-                        deps=deps,
-                        message_history=to_model_messages(history),
-                        model=model,
-                        capabilities=[hooks],
-                    )
-            finally:
-                answer.sources = unique_sources(deps.retrieved_sources)
-            answer.response = result.output
-            answer.tools_called = tool_names_called(result.new_messages())
-            recorder.end_span(span, outputs={"answer": answer.response})
+        deps = TutorDeps()
+        hooks = RecordingHooks(recorder, span, "tutor", replay=replay)
+        try:
+            with tutor_prompt_override(override.system_prompt if override else None):
+                result = await tutor_agent.run(
+                    question,
+                    deps=deps,
+                    message_history=to_model_messages(history),
+                    model=model,
+                    capabilities=[hooks],
+                )
+        finally:
+            answer.sources = unique_sources(deps.retrieved_sources)
+        answer.response = result.output
+        answer.tools_called = tool_names_called(result.new_messages())
+        recorder.end_span(span, outputs={"answer": answer.response})
     except Exception as exc:
         if span is not None:
             recorder.end_span(span, error=exc)
@@ -279,8 +230,6 @@ async def run_chat_turn(db: Session, conversation: Conversation, user_text: str)
         request_id=request_id,
         message_id=assistant_message.id,
         response=answer.response,
-        classification=answer.classification,
-        route=answer.route,
         tools_called=answer.tools_called,
         sources=answer.sources,
         duration_ms=duration_ms,
@@ -293,10 +242,6 @@ def _fill_run_log(run_log: AgentRun, answer: TurnAnswer, recorder: TurnRecorder)
     run_log.kitaru_status = recorder.outcome.value
     run_log.kitaru_session_id = recorder.session_id
     run_log.kitaru_problem = recorder.problem
-    if answer.classification is not None:
-        c = answer.classification
-        run_log.scope, run_log.intent, run_log.language = c.scope, c.intent, c.language
-    run_log.selected_route = answer.route
     run_log.tools_called = answer.tools_called
     run_log.retrieved_sources = answer.sources
 

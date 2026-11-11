@@ -5,14 +5,15 @@ from app.rag.ingest import LESSONS_DIR, chunk_markdown, estimate_tokens, extract
 from app.rag.retrieve import search_chunks
 
 
-def test_there_are_fifteen_lessons_with_required_sections():
+def test_lessons_have_required_sections():
     files = sorted(LESSONS_DIR.glob("*.md"))
-    assert len(files) == 15
+    assert len(files) == 22  # 15 JavaScript concept lessons + 7 PEDAC guides
     for path in files:
         text = path.read_text()
         assert text.startswith("# "), path.name
-        assert "```javascript" in text, path.name
         assert "## Common Mistakes" in text, path.name
+        if "-javascript-" in path.name:
+            assert "```javascript" in text, path.name
 
 
 def test_chunks_stay_within_target_size_and_keep_code_blocks_whole():

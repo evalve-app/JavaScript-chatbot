@@ -102,7 +102,7 @@ async def run_task(task_id: uuid.UUID, client_factory=task_client) -> int:
             return EXIT_TURN_FAILED
 
         outcome = await recorder.finish(answer=answer.response)
-        print(f"session {recorder.session_id}: {outcome} (route: {answer.route})")
+        print(f"session {recorder.session_id}: {outcome}")
         if outcome != Outcome.RECORDED:
             print(f"Kitaru recording incomplete: {recorder.problem}", file=sys.stderr)
             return EXIT_TURN_FAILED
@@ -113,7 +113,7 @@ async def run_task(task_id: uuid.UUID, client_factory=task_client) -> int:
 
 async def answer_locally(question: str) -> int:
     answer = await answer_turn(question, [])
-    print(f"[route: {answer.route}]\n{answer.response}")
+    print(answer.response)
     return EXIT_OK
 
 

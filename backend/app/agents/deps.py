@@ -5,6 +5,5 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TutorDeps:
-    route: str
     # Filled by search_lessons so the workflow can log which lessons were used.
     retrieved_sources: list[dict] = field(default_factory=list)

@@ -5,14 +5,8 @@ from contextlib import contextmanager
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
 
-from app.agents.classifier import classifier_agent
 from app.agents.tutor import tutor_agent
-
-
-def fake_classifier_model(scope: str, intent: str, language: str) -> TestModel:
-    return TestModel(custom_output_args={"scope": scope, "intent": intent, "language": language})
 
 
 def scripted_tutor_model(tool_calls: list[tuple[str, dict]] | None = None, answer: str = "Fake answer") -> FunctionModel:
@@ -31,12 +25,8 @@ def scripted_tutor_model(tool_calls: list[tuple[str, dict]] | None = None, answe
 
 @contextmanager
 def fake_agents(
-    classification: tuple[str, str, str] = ("in_scope", "concept", "javascript"),
     tool_calls: list[tuple[str, dict]] | None = None,
     answer: str = "Fake answer",
 ) -> Iterator[None]:
-    with (
-        classifier_agent.override(model=fake_classifier_model(*classification)),
-        tutor_agent.override(model=scripted_tutor_model(tool_calls, answer)),
-    ):
+    with tutor_agent.override(model=scripted_tutor_model(tool_calls, answer)):
         yield

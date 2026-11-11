@@ -1,18 +1,10 @@
 // Thin API client. Vite proxies /api to the FastAPI server (see vite.config.ts).
 const API_URL = ''
 
-export type Classification = {
-  scope: 'in_scope' | 'out_of_scope'
-  intent: 'concept' | 'debugging' | 'code_generation' | 'quiz'
-  language: 'javascript' | 'other' | 'unknown'
-}
-
 export type Source = { title: string; source_filename: string }
 
 export type RunDetails = {
   request_id: string
-  classification: Classification | null
-  route: string | null
   tools_called: string[]
   sources: Source[]
   duration_ms: number
@@ -40,8 +32,6 @@ export type ChatResponse = {
   message_id: string
   request_id: string
   response: string
-  classification: Classification
-  route: string
   tools_called: string[]
   sources: Source[]
   duration_ms: number

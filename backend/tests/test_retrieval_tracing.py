@@ -56,7 +56,7 @@ async def run_tutor_with_search(recorder, queries, replay=None):
     tool_calls = [("search_lessons", {"query": q}) for q in queries]
     with tutor_agent.override(model=scripted_tutor_model(tool_calls, "done")):
         await tutor_agent.run(
-            "q", deps=TutorDeps(route="concept"), capabilities=[RecordingHooks(recorder, span, "tutor", replay=replay)]
+            "q", deps=TutorDeps(), capabilities=[RecordingHooks(recorder, span, "tutor", replay=replay)]
         )
     recorder.end_span(span)
 

@@ -12,7 +12,7 @@ from app.tools.search import search_lessons
 
 class FakeCtx:
     def __init__(self):
-        self.deps = TutorDeps(route="concept")
+        self.deps = TutorDeps()
 
 
 def test_tools_are_registered_with_stable_names():
@@ -72,7 +72,7 @@ def test_get_mock_progress_unknown_student(seeded_students):
 @pytest.mark.anyio
 async def test_agent_can_call_all_three_tools(ingested_lessons, seeded_students):
     # TestModel calls every registered tool with generated arguments.
-    deps = TutorDeps(route="concept")
+    deps = TutorDeps()
     with tutor_agent.override(model=TestModel()):
         result = await tutor_agent.run("Explain closures", deps=deps)
     called = {

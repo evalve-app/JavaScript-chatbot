@@ -109,13 +109,8 @@ def create_conversation(member: TeamMember = Depends(current_member), db: Sessio
 
 
 def run_details(run: AgentRun) -> RunDetails:
-    classification = None
-    if run.scope and run.intent and run.language:
-        classification = {"scope": run.scope, "intent": run.intent, "language": run.language}
     return RunDetails(
         request_id=run.request_id,
-        classification=classification,
-        route=run.selected_route,
         tools_called=run.tools_called or [],
         sources=[Source(**s) for s in run.retrieved_sources or []],
         duration_ms=run.duration_ms,
@@ -192,8 +187,6 @@ async def chat(
         message_id=result.message_id,
         request_id=result.request_id,
         response=result.response,
-        classification=result.classification,
-        route=result.route,
         tools_called=result.tools_called,
         sources=[Source(**s) for s in result.sources],
         duration_ms=result.duration_ms,

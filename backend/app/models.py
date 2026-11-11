@@ -82,10 +82,6 @@ class AgentRun(Base):
     message_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    scope: Mapped[str | None] = mapped_column(String(20))
-    intent: Mapped[str | None] = mapped_column(String(30))
-    language: Mapped[str | None] = mapped_column(String(20))
-    selected_route: Mapped[str | None] = mapped_column(String(30))
     tools_called: Mapped[list[str]] = mapped_column(JSONB, default=list)
     retrieved_sources: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     model_name: Mapped[str] = mapped_column(String(100))
