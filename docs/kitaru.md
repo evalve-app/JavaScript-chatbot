@@ -5,14 +5,18 @@ StudyBot records each chat turn as one Kitaru session, and Kitaru can replay tho
 ## What one session holds
 
 ```
-turn                       inputs: {"turns": [...earlier turns..., {"inputs": question}]}
-├─ classify                outputs: scope, intent, language, route
-│  └─ classifier.model_request
-└─ tutor                   (JavaScript questions only)
-   ├─ tutor.model_request
-   ├─ search_lessons       full lesson text
-   └─ tutor.model_request
+invoke_agent studybot                    span      inputs: {"turns": [..., {"inputs": question}]}
+├─ invoke_agent classifier               span      outputs: scope, intent, language, route
+│  └─ chat gpt-4o-mini                   llm_call
+└─ invoke_agent tutor                    span      (JavaScript questions only)
+   ├─ chat gpt-4o-mini                   llm_call
+   ├─ execute_tool search_lessons        tool_call full lesson text
+   │  └─ retrieve lessons                span      pgvector search: document ids + scores
+   │     └─ embeddings text-embedding-3-small  llm_call  tokens, vector size (not the vector)
+   └─ chat gpt-4o-mini                   llm_call
 ```
+
+Names follow the OpenTelemetry GenAI conventions (`invoke_agent`, `chat`, `execute_tool`, `embeddings`), and every node carries matching `gen_ai.*` attributes. Retrieval is shaped like OpenInference (Arize Phoenix): a RETRIEVER span with its EMBEDDING call inside. Replay details use `replay.*` attributes (`replay.policy`, `replay.mocked`, `replay.override`). A tool answered from history has no retrieval children, because nothing was fetched.
 
 Developer details in the app shows each answer's Kitaru status: `disabled`, `recorded`, `partial` (incomplete, marked failed in Kitaru), or `unrecorded` (Kitaru was unreachable; the chat still answered).
 

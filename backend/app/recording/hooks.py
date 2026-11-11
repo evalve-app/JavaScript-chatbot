@@ -17,6 +17,7 @@ from kitaru.api_models.v1.session_node import NodeType
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
+from app.recording.context import trace_parent
 from app.recording.recorder import TurnRecorder, utcnow
 from app.recording.replay import ReplayPlan
 
@@ -130,9 +131,17 @@ class RecordingHooks(AbstractCapability[Any]):
         request_context, override_note = self._apply_overrides(request_context)
         inputs, input_selector, system_selector = model_inputs(request_context.messages)
         settings = request_context.model_settings or {}
+        attributes: dict[str, Any] = {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.agent.name": self.agent_name,
+            "gen_ai.request.model": requested,
+        }
+        if override_note:
+            attributes["replay.override"] = override_note
         common = dict(
             node_type=NodeType.LLM_CALL,
-            name=f"{self.agent_name}.model_request",
+            name=f"chat {requested}",  # OpenTelemetry GenAI span name: "{operation} {model}"
             parent=self.parent,
             started_at=started,
             inputs=inputs,
@@ -140,7 +149,7 @@ class RecordingHooks(AbstractCapability[Any]):
             system_prompt_selector=system_selector,
             requested_model=requested,
             model_params={k: settings[k] for k in RECORDED_SETTINGS if k in settings} or None,
-            attributes={"agent": self.agent_name, **({"override": override_note} if override_note else {})},
+            attributes=attributes,
         )
         try:
             response = await handler(request_context)
@@ -148,42 +157,57 @@ class RecordingHooks(AbstractCapability[Any]):
             self.recorder.add_node(**common, error=error)
             raise
         outputs = model_outputs(response)
+        usage = token_usage(response)
+        attributes.update(
+            {
+                "gen_ai.response.model": response.model_name,
+                "gen_ai.response.finish_reasons": [response.finish_reason] if response.finish_reason else [],
+                "gen_ai.usage.input_tokens": usage.input_tokens,
+                "gen_ai.usage.output_tokens": usage.output_tokens,
+            }
+        )
         self.recorder.add_node(
             **common,
             outputs=outputs,
             output_text_selector="/text" if outputs["text"] else None,
             model=response.model_name,
             model_provider=response.provider_name,
-            tokens=token_usage(response),
+            tokens=usage,
         )
         return response
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
-        started = utcnow()
         # Recorded inputs and history lookups use the same captured form, so cache keys match.
         recorded_args = self.recorder.capture(args)
-        attributes: dict[str, Any] = {"agent": self.agent_name, "tool_call_id": call.tool_call_id}
-        common = dict(
-            node_type=NodeType.TOOL_CALL,
-            name=call.tool_name,
-            tool_name=call.tool_name,
+        node_id = self.recorder.begin_node(
+            NodeType.TOOL_CALL,
+            f"execute_tool {call.tool_name}",  # OpenTelemetry GenAI span name
             parent=self.parent,
-            started_at=started,
             inputs=recorded_args,
-            attributes=attributes,
+            tool_name=call.tool_name,
+            attributes={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": call.tool_name,
+                "gen_ai.tool.call.id": call.tool_call_id,
+                "gen_ai.tool.type": "function",
+                "gen_ai.agent.name": self.agent_name,
+            },
         )
+        replay_attributes: dict[str, Any] = {}
         try:
-            if self.replay is None:
-                result = await handler(args)
-            else:
-                decision = await self.replay.decide_tool(call.tool_name, recorded_args)
-                attributes["policy"] = decision.policy
-                if decision.hit is not None:
-                    attributes["policy_hit"] = decision.hit
-                result = await handler(args) if decision.run_live else decision.result
-                attributes["mocked"] = not decision.run_live
+            # Steps the tool records itself (e.g. retrieval) nest under this node.
+            with trace_parent(self.recorder, node_id):
+                if self.replay is None:
+                    result = await handler(args)
+                else:
+                    decision = await self.replay.decide_tool(call.tool_name, recorded_args)
+                    replay_attributes["replay.policy"] = decision.policy
+                    if decision.hit is not None:
+                        replay_attributes["replay.policy_hit"] = decision.hit
+                    replay_attributes["replay.mocked"] = not decision.run_live
+                    result = await handler(args) if decision.run_live else decision.result
         except BaseException as error:
-            self.recorder.add_node(**common, error=error)
+            self.recorder.end_node(node_id, error=error, attributes=replay_attributes)
             raise
-        self.recorder.add_node(**common, outputs=result)
+        self.recorder.end_node(node_id, outputs=result, attributes=replay_attributes)
         return result

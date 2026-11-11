@@ -26,7 +26,7 @@ from app.kitaru_entry import EXIT_BAD_REPLAY, EXIT_OK, EXIT_TURN_FAILED, questio
 from app.models import AgentRun, Message
 from app.recording.recorder import turns_input
 from tests.fakes import fake_agents
-from tests.test_recording import FakeKitaru, FakeSessions
+from tests.test_recording import FakeKitaru, FakeSessions, llm_calls, node_named
 
 pytestmark = pytest.mark.anyio
 TASK_ID = uuid.uuid4()
@@ -148,7 +148,7 @@ async def test_history_policy_answers_tools_from_the_recording(monkeypatch):
         assert await run_task(TASK_ID, fake.client) == EXIT_OK
     assert fake.lookups[0].occurrence == 0
     tool = next(n for n in only_session(fake)["nodes"].values() if n.node_type.value == "tool_call")
-    assert tool.outputs == {"code": "recorded!"} and tool.attributes["mocked"] is True
+    assert tool.outputs == {"code": "recorded!"} and tool.attributes["replay.mocked"] is True
 
 
 async def test_unsupported_replay_is_rejected_before_anything_runs():
@@ -211,12 +211,13 @@ async def test_override_prompt_and_model_reach_the_run(monkeypatch):
             assert await run_task(TASK_ID, fake.client) == EXIT_OK
     s = only_session(fake)
     assert s["updates"][-1].outputs == {"answer": "from gpt-4.1-mini"}
-    classify = next(n for n in s["nodes"].values() if n.name == "classify")
+    classify = node_named(s, "invoke_agent classifier")
     assert classify.inputs == {"question": "Explain closures simply"}
-    tutor_call = next(n for n in s["nodes"].values() if n.name == "tutor.model_request")
-    assert tutor_call.requested_model == "gpt-4o-mini" and tutor_call.attributes["override"] == {"model": "gpt-4.1-mini"}
-    classifier_call = next(n for n in s["nodes"].values() if n.name == "classifier.model_request")
-    assert "override" not in classifier_call.attributes
+    (tutor_call,) = llm_calls(s, "tutor")
+    assert tutor_call.requested_model == "gpt-4o-mini"
+    assert tutor_call.attributes["replay.override"] == {"model": "gpt-4.1-mini"}
+    (classifier_call,) = llm_calls(s, "classifier")
+    assert "replay.override" not in classifier_call.attributes
 
 
 def test_question_and_history_formats():

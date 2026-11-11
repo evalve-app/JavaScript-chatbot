@@ -15,6 +15,7 @@ Best effort: Kitaru problems never raise into the app. They end up in `outcome`
 """
 
 import asyncio
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -41,6 +42,7 @@ from app.recording.capture import capture, capture_error
 FRAMEWORK = "pydantic-ai"
 ADAPTER_VERSION = "studybot-0.1.0"
 ROOT_ID = "turn"
+AGENT_NAME = "studybot"
 BATCH_SIZE = 50
 WRITE_TIMEOUT_SECONDS = 5.0
 # After a failed write, skip recording for a while so a stopped Kitaru server
@@ -117,8 +119,10 @@ class TurnRecorder:
         self.outcome = Outcome.DISABLED if client_factory is None else Outcome.UNRECORDED
         self.problem: str | None = None  # first Kitaru problem, for diagnostics
         self.confirmed_nodes = 0
-        # Open spans: external_id -> (buffer position, name, inputs, started_at)
-        self._open_spans: dict[str, tuple[int, str, Any, datetime]] = {}
+        # Reserved nodes not yet finished: external_id -> (buffer position, node fields)
+        self._open_nodes: dict[str, tuple[int, dict]] = {}
+        # Sync tools run in worker threads, so buffer changes are locked.
+        self._lock = threading.Lock()
 
     @property
     def active(self) -> bool:
@@ -205,64 +209,91 @@ class TurnRecorder:
         external_id = external_id or uuid.uuid4().hex
         if not self.active:
             return external_id
-        self._buffer.append(
-            SessionNodeCreateRequest(
-                external_id=external_id,
-                parent_external_id=parent,
-                node_type=node_type,
-                name=name,
-                status=NodeStatus.FAILED if error else NodeStatus.COMPLETED,
-                error=capture_error(error, self._secrets) if error else None,
-                started_at=started_at,
-                ended_at=utcnow(),
-                inputs=self.capture(inputs),
-                outputs=self.capture(outputs),
-                tokens=tokens,
-                attributes=self.capture(fields.pop("attributes", {})),
-                **fields,
-            )
-        )
-        return external_id
-
-    def begin_span(self, name: str, inputs: Any = None, parent: str = ROOT_ID) -> str:
-        """Reserve a span's place in the buffer so it is sent before its children."""
-        external_id = uuid.uuid4().hex
-        if self.active:
-            self._open_spans[external_id] = (len(self._buffer), name, inputs, utcnow())
-            self._buffer.append(self._span_node(external_id, parent, name, inputs, NodeStatus.IN_PROGRESS))
-        return external_id
-
-    def end_span(self, span_id: str, outputs: Any = None, error: BaseException | None = None) -> None:
-        if span_id not in self._open_spans:
-            return
-        position, name, inputs, started_at = self._open_spans.pop(span_id)
-        parent = self._buffer[position].parent_external_id
-        status = NodeStatus.FAILED if error else NodeStatus.COMPLETED
-        self._buffer[position] = self._span_node(
-            span_id, parent, name, inputs, status, outputs, error, started_at, utcnow()
-        )
-
-    def _span_node(self, external_id, parent, name, inputs, status, outputs=None, error=None, started_at=None, ended_at=None):
-        return SessionNodeCreateRequest(
+        node = SessionNodeCreateRequest(
             external_id=external_id,
             parent_external_id=parent,
-            node_type=NodeType.SPAN,
+            node_type=node_type,
             name=name,
-            status=status,
+            status=NodeStatus.FAILED if error else NodeStatus.COMPLETED,
             error=capture_error(error, self._secrets) if error else None,
-            started_at=started_at or utcnow(),
-            ended_at=ended_at,
+            started_at=started_at,
+            ended_at=utcnow(),
             inputs=self.capture(inputs),
             outputs=self.capture(outputs),
-            attributes={},
+            tokens=tokens,
+            attributes=self.capture(fields.pop("attributes", {})),
+            **fields,
         )
+        with self._lock:
+            self._buffer.append(node)
+        return external_id
+
+    def begin_node(
+        self,
+        node_type: NodeType,
+        name: str,
+        *,
+        parent: str = ROOT_ID,
+        inputs: Any = None,
+        attributes: dict | None = None,
+        **fields: Any,
+    ) -> str:
+        """Reserve a node's place in the buffer (in progress) so it is sent before its children."""
+        external_id = uuid.uuid4().hex
+        if not self.active:
+            return external_id
+        node = dict(
+            external_id=external_id,
+            parent_external_id=parent,
+            node_type=node_type,
+            name=name,
+            started_at=utcnow(),
+            inputs=self.capture(inputs),
+            attributes=self.capture(attributes or {}),
+            **fields,
+        )
+        with self._lock:
+            self._open_nodes[external_id] = (len(self._buffer), node)
+            self._buffer.append(SessionNodeCreateRequest(**node, status=NodeStatus.IN_PROGRESS, outputs=None))
+        return external_id
+
+    def end_node(
+        self,
+        node_id: str,
+        *,
+        outputs: Any = None,
+        error: BaseException | None = None,
+        attributes: dict | None = None,
+        **fields: Any,
+    ) -> None:
+        """Complete (or fail) a reserved node. Extra attributes and fields are merged in."""
+        with self._lock:
+            if node_id not in self._open_nodes:
+                return
+            position, node = self._open_nodes.pop(node_id)
+            node = {**node, **fields}
+            if attributes:
+                node["attributes"] = {**node["attributes"], **self.capture(attributes)}
+            self._buffer[position] = SessionNodeCreateRequest(
+                **node,
+                status=NodeStatus.FAILED if error else NodeStatus.COMPLETED,
+                error=capture_error(error, self._secrets) if error else None,
+                ended_at=utcnow(),
+                outputs=self.capture(outputs),
+            )
+
+    def begin_span(self, name: str, inputs: Any = None, parent: str = ROOT_ID, attributes: dict | None = None) -> str:
+        return self.begin_node(NodeType.SPAN, name, parent=parent, inputs=inputs, attributes=attributes)
+
+    def end_span(self, span_id: str, outputs: Any = None, error: BaseException | None = None) -> None:
+        self.end_node(span_id, outputs=outputs, error=error)
 
     async def finish(self, *, answer: str | None = None, error: BaseException | None = None) -> Outcome:
         """Store buffered nodes and the terminal state. Never raises."""
         if not self.active:
             return self.outcome
-        for span_id in list(self._open_spans):  # a span left open means its step crashed
-            self.end_span(span_id, error=error or RuntimeError("span was not closed"))
+        for node_id in list(self._open_nodes):  # a node left open means its step crashed
+            self.end_node(node_id, error=error or RuntimeError("step did not finish"))
         ended_at = utcnow()
         outputs = {"answer": self.capture(answer)} if error is None else None
         error_text = capture_error(error, self._secrets) if error else None
@@ -303,7 +334,7 @@ class TurnRecorder:
             external_id=ROOT_ID,
             parent_external_id=None,
             node_type=NodeType.SPAN,
-            name="turn",
+            name=f"invoke_agent {AGENT_NAME}",
             status=status,
             error=error,
             started_at=self._started_at,
@@ -312,7 +343,7 @@ class TurnRecorder:
             outputs=outputs,
             input_text_selector="/question",
             output_text_selector="/answer" if outputs else None,
-            attributes={},
+            attributes={"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": AGENT_NAME},
         )
 
     async def _mark_failed(self, message: str) -> None:

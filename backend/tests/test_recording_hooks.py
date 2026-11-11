@@ -10,7 +10,7 @@ from app.agents.deps import TutorDeps
 from app.agents.tutor import tutor_agent
 from app.recording.hooks import RecordingHooks
 from tests.fakes import fake_classifier_model, scripted_tutor_model
-from tests.test_recording import FakeKitaru, only_session, recorder_for
+from tests.test_recording import FakeKitaru, llm_calls, only_session, recorder_for
 
 pytestmark = pytest.mark.anyio
 
@@ -60,14 +60,14 @@ async def test_classifier_and_tutor_land_under_their_spans(ingested_lessons):
     assert classify.status.value == tutor.status.value == "completed"
     assert classify.outputs["route"] == "concept"
 
-    classifier_calls = [n for n in nodes if n.name == "classifier.model_request"]
+    classifier_calls = llm_calls(s, "classifier")
     assert len(classifier_calls) == 1
     assert classifier_calls[0].parent_external_id == classify.external_id
     assert classifier_calls[0].node_type.value == "llm_call"
     assert "You classify messages sent to StudyBot" in classifier_calls[0].inputs["instructions"]
     assert classifier_calls[0].system_prompt_selector == "/instructions"
 
-    tutor_calls = [n for n in nodes if n.name == "tutor.model_request"]
+    tutor_calls = llm_calls(s, "tutor")
     tools = [n for n in nodes if n.node_type.value == "tool_call"]
     assert len(tutor_calls) == 2 and len(tools) == 1
     assert all(n.parent_external_id == tutor.external_id for n in tutor_calls + tools)
@@ -141,7 +141,7 @@ async def test_failing_model_call_is_recorded():
     recorder.end_span(span, error=ConnectionError("OpenAI unreachable"))
     await recorder.finish(error=ConnectionError("OpenAI unreachable"))
 
-    call = nodes_by_name(only_session(fake))["classifier.model_request"]
+    (call,) = llm_calls(only_session(fake), "classifier")
     assert call.status.value == "failed" and "OpenAI unreachable" in call.error
 
 
@@ -175,7 +175,7 @@ async def test_history_messages_are_projected_in_model_inputs():
     recorder.end_span(span)
     await recorder.finish(answer="Here's another")
 
-    call = nodes_by_name(only_session(fake))["tutor.model_request"]
+    (call,) = llm_calls(only_session(fake), "tutor")
     kinds = [(m["kind"], m["parts"][0]["type"]) for m in call.inputs["messages"]]
     assert kinds == [("request", "user-prompt"), ("response", "text"), ("request", "user-prompt")]
     # The selector points at the NEW question, not the old one.

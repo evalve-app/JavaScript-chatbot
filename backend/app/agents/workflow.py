@@ -10,6 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from kitaru.api_models.v1.session_node import NodeType
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ from app.config import get_settings
 from app.models import AgentRun, Conversation, Message
 from app.recording.hooks import RecordingHooks
 from app.recording.live import agent_ids, new_turn_recorder
-from app.recording.recorder import TurnRecorder
+from app.recording.recorder import TurnRecorder, utcnow
 from app.recording.replay import ReplayPlan
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,48 @@ class TurnAnswer:
     sources: list[dict] = field(default_factory=list)
 
 
+CANNED_RESPONSES = {"out_of_scope": OUT_OF_SCOPE_RESPONSE, "out_of_scope_other_language": OTHER_LANGUAGE_RESPONSE}
+
+
+def record_route(recorder: TurnRecorder, classification: Classification, route: str) -> None:
+    """A `route` step: which handler the classification picked, and the canned reply if any."""
+    canned = CANNED_RESPONSES.get(route)
+    outputs = {"route": route, "handler": "canned_reply" if canned else "tutor"}
+    if canned:
+        outputs["response"] = canned
+    recorder.add_node(
+        node_type=NodeType.SPAN,
+        name="route",
+        started_at=utcnow(),
+        inputs=classification.model_dump(),
+        outputs=outputs,
+        attributes={"studybot.route": route, "studybot.handler": outputs["handler"]},
+    )
+
+
+def record_history_load(
+    recorder: TurnRecorder, started_at, conversation_id: uuid.UUID, limit: int, history: list[tuple[str, str]]
+) -> None:
+    """A `load history` step for the live app (replays take history from the recorded session)."""
+    recorder.add_node(
+        node_type=NodeType.SPAN,
+        name="load history",
+        started_at=started_at,
+        inputs={"conversation_id": str(conversation_id), "limit": limit},
+        outputs={"messages": len(history), "roles": [role for role, _ in history]},
+        attributes={
+            "db.system.name": "postgresql",
+            "db.operation.name": "SELECT",
+            "db.collection.name": Message.__tablename__,
+        },
+    )
+
+
+def agent_attributes(name: str) -> dict:
+    """OpenTelemetry GenAI attributes for an in-process agent span."""
+    return {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": name}
+
+
 class TurnFailed(Exception):
     """answer_turn failed; .partial holds the steps that finished."""
 
@@ -134,7 +177,9 @@ async def answer_turn(
     span = None
     try:
         # 1. Classify scope + intent in one call.
-        span = recorder.begin_span("classify", inputs={"question": question})
+        span = recorder.begin_span(
+            "invoke_agent classifier", inputs={"question": question}, attributes=agent_attributes("classifier")
+        )
         hooks = RecordingHooks(recorder, span, "classifier", replay=replay)
         result = await classifier_agent.run(
             build_classifier_input(question, history), model=model, capabilities=[hooks]
@@ -142,14 +187,16 @@ async def answer_turn(
         answer.classification = result.output
         answer.route = select_route(answer.classification)
         recorder.end_span(span, outputs={**answer.classification.model_dump(), "route": answer.route})
+        span = None
+        record_route(recorder, answer.classification, answer.route)
 
         # 2. Route. Out-of-scope requests never reach RAG or the tutor.
-        if answer.route == "out_of_scope":
-            answer.response = OUT_OF_SCOPE_RESPONSE
-        elif answer.route == "out_of_scope_other_language":
-            answer.response = OTHER_LANGUAGE_RESPONSE
+        if answer.route in CANNED_RESPONSES:
+            answer.response = CANNED_RESPONSES[answer.route]
         else:
-            span = recorder.begin_span("tutor", inputs={"route": answer.route})
+            span = recorder.begin_span(
+                "invoke_agent tutor", inputs={"route": answer.route}, attributes=agent_attributes("tutor")
+            )
             deps = TutorDeps(route=answer.route)
             hooks = RecordingHooks(recorder, span, "tutor", replay=replay)
             try:
@@ -178,6 +225,7 @@ async def run_chat_turn(db: Session, conversation: Conversation, user_text: str)
     request_id = uuid.uuid4()
     started = time.perf_counter()
 
+    history_started = utcnow()
     history = load_recent_history(db, conversation.id, settings.history_limit)
 
     db.add(Message(conversation_id=conversation.id, role="user", content=user_text))
@@ -194,6 +242,7 @@ async def run_chat_turn(db: Session, conversation: Conversation, user_text: str)
         agent_version_id=agent_version_id,
         metadata={"source": "studybot-web", "request_id": str(request_id), "conversation_id": str(conversation.id)},
     )
+    record_history_load(recorder, history_started, conversation.id, settings.history_limit, history)
 
     run_log = AgentRun(request_id=request_id, conversation_id=conversation.id, model_name=settings.openai_model)
     try:

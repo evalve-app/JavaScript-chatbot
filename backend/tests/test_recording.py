@@ -92,6 +92,19 @@ async def record_simple_turn(recorder, error=None):
     return await recorder.finish(answer=None if error else "A closure is...", error=error)
 
 
+def llm_calls(session, agent):
+    """Model calls made by one agent (names include the model, so match on the agent)."""
+    return [
+        n
+        for n in session["nodes"].values()
+        if n.node_type.value == "llm_call" and n.attributes.get("gen_ai.agent.name") == agent
+    ]
+
+
+def node_named(session, name):
+    return next(n for n in session["nodes"].values() if n.name == name)
+
+
 def only_session(fake):
     assert len(fake.sessions) == 1
     return next(iter(fake.sessions.values()))
@@ -213,7 +226,7 @@ async def test_concurrent_turns_stay_separate():
     assert a != b
     for sid, q in [(a, "A"), (b, "B")]:
         names = {n.name for n in fake.sessions[sid]["nodes"].values()}
-        assert names == {"turn", f"span-{q}"}
+        assert names == {"invoke_agent studybot", f"span-{q}"}
         assert fake.sessions[sid]["nodes"][rec.ROOT_ID].outputs == {"answer": f"answer-{q}"}
 
 

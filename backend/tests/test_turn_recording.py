@@ -17,7 +17,7 @@ from app.agents.workflow import TurnFailed, WorkflowError, answer_turn, run_chat
 from app.models import AgentRun, Conversation, Message, TeamMember
 from app.recording.replay import ReplayPlan
 from tests.fakes import fake_agents, fake_classifier_model
-from tests.test_recording import FakeKitaru, only_session, recorder_for
+from tests.test_recording import FakeKitaru, node_named, only_session, recorder_for
 
 pytestmark = pytest.mark.anyio
 
@@ -85,21 +85,31 @@ async def test_answer_turn_records_the_agreed_tree():
 
     s = only_session(fake)
     by_id = s["nodes"]
-    parent_name = lambda n: by_id[n.parent_external_id].name if n.parent_external_id else "-"  # noqa: E731
-    tree = sorted((parent_name(n), n.name) for n in by_id.values())
+    def label(n):  # model-call names include the model; label them by agent instead
+        if n.node_type.value == "llm_call":
+            return f"chat by {n.attributes['gen_ai.agent.name']}"
+        return n.name
+
+    parent_label = lambda n: label(by_id[n.parent_external_id]) if n.parent_external_id else "-"  # noqa: E731
+    tree = sorted((parent_label(n), label(n)) for n in by_id.values())
     assert tree == sorted(
         [
-            ("-", "turn"),
-            ("turn", "classify"),
-            ("classify", "classifier.model_request"),
-            ("turn", "tutor"),
-            ("tutor", "tutor.model_request"),
-            ("tutor", "get_code_example"),
-            ("tutor", "tutor.model_request"),
+            ("-", "invoke_agent studybot"),
+            ("invoke_agent studybot", "invoke_agent classifier"),
+            ("invoke_agent classifier", "chat by classifier"),
+            ("invoke_agent studybot", "route"),
+            ("invoke_agent studybot", "invoke_agent tutor"),
+            ("invoke_agent tutor", "chat by tutor"),
+            ("invoke_agent tutor", "execute_tool get_code_example"),
+            ("invoke_agent tutor", "chat by tutor"),
         ]
     )
-    classify = next(n for n in by_id.values() if n.name == "classify")
+    classify = node_named(s, "invoke_agent classifier")
+    assert classify.attributes == {"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "classifier"}
     assert classify.outputs == {"scope": "in_scope", "intent": "concept", "language": "javascript", "route": "concept"}
+    route = node_named(s, "route")
+    assert route.inputs == {"scope": "in_scope", "intent": "concept", "language": "javascript"}
+    assert route.outputs == {"route": "concept", "handler": "tutor"}
 
 
 async def test_out_of_scope_turn_has_no_tutor_span():
@@ -110,7 +120,11 @@ async def test_out_of_scope_turn_has_no_tutor_span():
         answer = await answer_turn("pizza?", [], recorder=recorder)
     await recorder.finish(answer=answer.response)
     assert answer.response == OUT_OF_SCOPE_RESPONSE
-    assert "tutor" not in names(only_session(fake))
+    s = only_session(fake)
+    assert "invoke_agent tutor" not in names(s)
+    route = node_named(s, "route")
+    assert route.outputs == {"route": "out_of_scope", "handler": "canned_reply", "response": OUT_OF_SCOPE_RESPONSE}
+    assert route.attributes == {"studybot.route": "out_of_scope", "studybot.handler": "canned_reply"}
 
 
 async def test_prompt_override_changes_the_question_for_both_agents():
@@ -186,6 +200,12 @@ async def test_live_turn_is_recorded_as_one_session(db, conversation, recording_
     }
     assert second["updates"][-1].status.value == "completed"
     assert second["updates"][-1].outputs == {"answer": "second"}
+    # Loading that history is its own step.
+    load = next(n for n in second["nodes"].values() if n.name == "load history")
+    assert load.parent_external_id == next(n for n in second["nodes"].values() if n.parent_external_id is None).external_id
+    assert load.inputs["conversation_id"] == str(conversation.id)
+    assert load.outputs == {"messages": 2, "roles": ["user", "assistant"]}
+    assert load.attributes["db.collection.name"] == "messages"
 
 
 async def test_chat_still_works_when_kitaru_is_down(db, conversation, monkeypatch):
@@ -212,7 +232,7 @@ async def test_failed_live_turn_records_failed_session(db, conversation, recordi
     s = only_session(recording_on)
     assert s["updates"][-1].status.value == "failed"
     assert "tutor down" in s["updates"][-1].error
-    tutor_span = next(n for n in s["nodes"].values() if n.name == "tutor")
+    tutor_span = node_named(s, "invoke_agent tutor")
     assert tutor_span.status.value == "failed"
     run = db.scalar(select(AgentRun))
     assert run.selected_route == "concept" and "tutor down" in run.error_message
