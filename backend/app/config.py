@@ -26,6 +26,13 @@ class Settings(BaseSettings):
 
     session_max_age_days: int = 30
 
+    # Kitaru recording (optional). Recording is off unless KITARU_AGENT_ID is set.
+    # URL and key fall back to your `kitaru login` when left empty.
+    kitaru_agent_id: str = ""
+    kitaru_agent_version_id: str = ""
+    kitaru_api_url: str = ""
+    kitaru_api_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -89,6 +89,8 @@ export default function App() {
             sources: result.sources,
             duration_ms: result.duration_ms,
             model_name: '',
+            kitaru_status: result.kitaru_status,
+            kitaru_session_id: result.kitaru_session_id,
           },
         },
       ])

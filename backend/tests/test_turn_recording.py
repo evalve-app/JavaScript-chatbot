@@ -1,0 +1,266 @@
+"""Step 4: answer_turn (no DB writes) + run_chat_turn recording a whole turn as one session."""
+
+import uuid
+
+import pytest
+from kitaru.api_models.v1.replay_config import PassthroughConfig, ReplayOverride, ToolPolicy
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from sqlalchemy import func, select
+
+import app.agents.workflow as workflow
+import app.recording.recorder as rec
+from app.agents.classifier import classifier_agent
+from app.agents.prompts import OUT_OF_SCOPE_RESPONSE
+from app.agents.tutor import tutor_agent
+from app.agents.workflow import TurnFailed, WorkflowError, answer_turn, run_chat_turn
+from app.models import AgentRun, Conversation, Message, TeamMember
+from app.recording.replay import ReplayPlan
+from tests.fakes import fake_agents, fake_classifier_model
+from tests.test_recording import FakeKitaru, only_session, recorder_for
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def no_backoff():
+    rec.reset_backoff()
+    yield
+    rec.reset_backoff()
+
+
+@pytest.fixture
+def conversation(db):
+    member = TeamMember(display_name="Tester")
+    db.add(member)
+    db.commit()
+    conv = Conversation(team_member_id=member.id)
+    db.add(conv)
+    db.commit()
+    return conv
+
+
+@pytest.fixture
+def recording_on(monkeypatch):
+    """Turn recording on for run_chat_turn, into a fake Kitaru."""
+    fake = FakeKitaru()
+    agent_id = uuid.uuid4()
+    monkeypatch.setattr(workflow, "new_turn_recorder", lambda: recorder_for(fake, secrets=[]))
+    monkeypatch.setattr(workflow, "agent_ids", lambda: (agent_id, None))
+    fake.agent_id = agent_id
+    return fake
+
+
+def names(session):
+    return [n.name for n in session["nodes"].values()]
+
+
+def replay_plan(**override):
+    return ReplayPlan(
+        override=ReplayOverride(**override),
+        tool_policy=ToolPolicy(default=PassthroughConfig(), tools={}),
+        lookup=None,
+    )
+
+
+# ---------- answer_turn ----------
+
+
+async def test_answer_turn_writes_nothing_to_the_database(db):
+    before = db.scalar(select(func.count()).select_from(Message))
+    with fake_agents(answer="hi"):
+        answer = await answer_turn("Explain closures", [])
+    assert answer.response == "hi" and answer.route == "concept"
+    assert db.scalar(select(func.count()).select_from(Message)) == before
+    assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+
+
+async def test_answer_turn_records_the_agreed_tree():
+    fake = FakeKitaru()
+    recorder = recorder_for(fake, secrets=[])
+    await recorder.start(question="Explain closures", history=[])
+    with fake_agents(tool_calls=[("get_code_example", {"topic": "closures"})], answer="Closures!"):
+        answer = await answer_turn("Explain closures", [], recorder=recorder)
+    await recorder.finish(answer=answer.response)
+
+    s = only_session(fake)
+    by_id = s["nodes"]
+    parent_name = lambda n: by_id[n.parent_external_id].name if n.parent_external_id else "-"  # noqa: E731
+    tree = sorted((parent_name(n), n.name) for n in by_id.values())
+    assert tree == sorted(
+        [
+            ("-", "turn"),
+            ("turn", "classify"),
+            ("classify", "classifier.model_request"),
+            ("turn", "tutor"),
+            ("tutor", "tutor.model_request"),
+            ("tutor", "get_code_example"),
+            ("tutor", "tutor.model_request"),
+        ]
+    )
+    classify = next(n for n in by_id.values() if n.name == "classify")
+    assert classify.outputs == {"scope": "in_scope", "intent": "concept", "language": "javascript", "route": "concept"}
+
+
+async def test_out_of_scope_turn_has_no_tutor_span():
+    fake = FakeKitaru()
+    recorder = recorder_for(fake, secrets=[])
+    await recorder.start(question="pizza?", history=[])
+    with fake_agents(classification=("out_of_scope", "concept", "unknown")):
+        answer = await answer_turn("pizza?", [], recorder=recorder)
+    await recorder.finish(answer=answer.response)
+    assert answer.response == OUT_OF_SCOPE_RESPONSE
+    assert "tutor" not in names(only_session(fake))
+
+
+async def test_prompt_override_changes_the_question_for_both_agents():
+    seen = {}
+
+    def classifier(messages, info: AgentInfo):
+        seen["classifier"] = messages[-1].parts[-1].content
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {"scope": "in_scope", "intent": "concept", "language": "javascript"})]
+        )
+
+    def tutor(messages, info: AgentInfo):
+        seen["tutor"] = messages[-1].parts[-1].content
+        return ModelResponse(parts=[TextPart("ok")])
+
+    with classifier_agent.override(model=FunctionModel(classifier)), tutor_agent.override(model=FunctionModel(tutor)):
+        answer = await answer_turn("original question", [], replay=replay_plan(prompt="NEW question"))
+    assert "NEW question" in seen["classifier"] and "original" not in seen["classifier"]
+    assert seen["tutor"] == "NEW question"
+    assert answer.question == "NEW question"
+
+
+async def test_system_prompt_override_replaces_only_the_tutor_prompt():
+    seen = {}
+
+    def tutor(messages, info: AgentInfo):
+        seen["tutor"] = info.instructions
+        return ModelResponse(parts=[TextPart("ok")])
+
+    def classifier(messages, info: AgentInfo):
+        seen["classifier"] = info.instructions
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {"scope": "in_scope", "intent": "quiz", "language": "javascript"})]
+        )
+
+    with classifier_agent.override(model=FunctionModel(classifier)), tutor_agent.override(model=FunctionModel(tutor)):
+        await answer_turn("Quiz me", [], replay=replay_plan(system_prompt="BE VERY BRIEF."))
+    assert seen["tutor"] == "BE VERY BRIEF.\n\nCurrent task: quiz"  # big prompt replaced, label kept
+    assert "You classify messages sent to StudyBot" in seen["classifier"]  # classifier untouched
+
+
+async def test_failure_reports_how_far_the_turn_got():
+    def broken(messages, info):
+        raise RuntimeError("tutor down")
+
+    with (
+        classifier_agent.override(model=fake_classifier_model("in_scope", "debugging", "javascript")),
+        tutor_agent.override(model=FunctionModel(broken)),
+    ):
+        with pytest.raises(TurnFailed) as exc_info:
+            await answer_turn("why undefined?", [])
+    assert exc_info.value.partial.route == "debugging"
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+# ---------- run_chat_turn: live recording ----------
+
+
+async def test_live_turn_is_recorded_as_one_session(db, conversation, recording_on):
+    with fake_agents(answer="first"):
+        await run_chat_turn(db, conversation, "Explain closures")
+    with fake_agents(answer="second"):
+        result = await run_chat_turn(db, conversation, "Another example?")
+
+    assert result.response == "second"
+    assert len(recording_on.sessions) == 2  # one session per turn
+    second = next(s for s in recording_on.sessions.values() if s["request"].metadata["request_id"] == str(result.request_id))
+    assert second["request"].agent_id == recording_on.agent_id
+    assert second["request"].metadata["conversation_id"] == str(conversation.id)
+    # The history the app used is in the session inputs.
+    assert second["request"].inputs == {
+        "turns": [{"inputs": "Explain closures", "outputs": "first"}, {"inputs": "Another example?"}]
+    }
+    assert second["updates"][-1].status.value == "completed"
+    assert second["updates"][-1].outputs == {"answer": "second"}
+
+
+async def test_chat_still_works_when_kitaru_is_down(db, conversation, monkeypatch):
+    fake = FakeKitaru(fail={"create"})
+    monkeypatch.setattr(workflow, "new_turn_recorder", lambda: recorder_for(fake, secrets=[]))
+    monkeypatch.setattr(workflow, "agent_ids", lambda: (uuid.uuid4(), None))
+    with fake_agents(answer="still answering"):
+        result = await run_chat_turn(db, conversation, "Explain closures")
+    assert result.response == "still answering"
+    assert fake.sessions == {}
+
+
+async def test_failed_live_turn_records_failed_session(db, conversation, recording_on):
+    def broken(messages, info):
+        raise RuntimeError("tutor down")
+
+    with (
+        classifier_agent.override(model=fake_classifier_model("in_scope", "concept", "javascript")),
+        tutor_agent.override(model=FunctionModel(broken)),
+    ):
+        with pytest.raises(WorkflowError):
+            await run_chat_turn(db, conversation, "Explain closures")
+
+    s = only_session(recording_on)
+    assert s["updates"][-1].status.value == "failed"
+    assert "tutor down" in s["updates"][-1].error
+    tutor_span = next(n for n in s["nodes"].values() if n.name == "tutor")
+    assert tutor_span.status.value == "failed"
+    run = db.scalar(select(AgentRun))
+    assert run.selected_route == "concept" and "tutor down" in run.error_message
+
+
+# ---------- Step 5: outcome is stored and shown ----------
+
+
+async def test_outcome_is_stored_on_agent_runs(db, conversation, recording_on):
+    with fake_agents(answer="ok"):
+        result = await run_chat_turn(db, conversation, "Explain closures")
+    run = db.scalar(select(AgentRun).where(AgentRun.request_id == result.request_id))
+    assert run.kitaru_status == result.kitaru_status == "recorded"
+    assert run.kitaru_session_id == result.kitaru_session_id == only_session_id(recording_on)
+    assert run.kitaru_problem is None
+
+
+async def test_unrecorded_outcome_keeps_the_problem(db, conversation, monkeypatch):
+    fake = FakeKitaru(fail={"create"})
+    monkeypatch.setattr(workflow, "new_turn_recorder", lambda: recorder_for(fake, secrets=[]))
+    monkeypatch.setattr(workflow, "agent_ids", lambda: (uuid.uuid4(), None))
+    with fake_agents(answer="ok"):
+        result = await run_chat_turn(db, conversation, "Explain closures")
+    run = db.scalar(select(AgentRun).where(AgentRun.request_id == result.request_id))
+    assert run.kitaru_status == "unrecorded" and run.kitaru_session_id is None
+    assert run.kitaru_problem.startswith("create session")
+
+
+async def test_recording_off_by_default(db, conversation):
+    with fake_agents(answer="ok"):
+        result = await run_chat_turn(db, conversation, "Explain closures")
+    assert result.kitaru_status == "disabled"
+
+
+def only_session_id(fake):
+    assert len(fake.sessions) == 1
+    return next(iter(fake.sessions))
+
+
+def test_init_db_adds_new_columns_to_an_existing_table():
+    from sqlalchemy import inspect, text
+
+    from app.database import create_tables, get_engine
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE agent_runs DROP COLUMN kitaru_problem"))
+    create_tables()
+    create_tables()  # safe to run twice
+    columns = {c["name"] for c in inspect(engine).get_columns("agent_runs")}
+    assert {"kitaru_status", "kitaru_session_id", "kitaru_problem"} <= columns

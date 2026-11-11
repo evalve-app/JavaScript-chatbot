@@ -1,4 +1,4 @@
-"""Builds the LLM model object from settings (kept in one place so the model is easy to swap)."""
+"""Builds LLM model objects from settings (kept in one place so the model is easy to swap)."""
 
 from functools import lru_cache
 
@@ -9,6 +9,10 @@ from app.config import get_settings
 
 
 @lru_cache
-def get_chat_model() -> OpenAIChatModel:
+def chat_model_named(model_name: str) -> OpenAIChatModel:
     settings = get_settings()
-    return OpenAIChatModel(settings.openai_model, provider=OpenAIProvider(api_key=settings.openai_api_key))
+    return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=settings.openai_api_key))
+
+
+def get_chat_model() -> OpenAIChatModel:
+    return chat_model_named(get_settings().openai_model)
