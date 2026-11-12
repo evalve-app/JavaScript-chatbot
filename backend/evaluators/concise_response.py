@@ -7,7 +7,7 @@ Register and run:
     kitaru evaluator register concise_response \
         --script evaluators/concise_response.py --entrypoint evaluate
     kitaru session evaluate --all --evaluator concise_response@1 \
-        --evaluator-params 'concise_response@1={"max_chars": 600}'
+        --evaluator-params 'concise_response@1={"max_chars": 850}'
 """
 
 from typing import Any
@@ -16,7 +16,7 @@ from kitaru.json_pointer import resolve_json_pointer
 from kitaru.task.evaluator import EvaluationResult, SessionView
 
 NAME = "concise_response"
-DEFAULT_MAX_CHARS = 700
+DEFAULT_MAX_CHARS = 850
 ROOT_ID = "turn"  # app.recording.recorder.ROOT_ID; the root node holds the final answer
 
 
