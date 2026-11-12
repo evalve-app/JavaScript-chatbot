@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from kitaru.api_models.v1.evaluation import EvaluationDataType
 from kitaru.api_models.v1.session import SessionDetailResponse
 from kitaru.api_models.v1.session_node import SessionNodeResponse
 from kitaru.task.evaluator import SessionView, call_evaluator
@@ -98,15 +99,14 @@ def fenced(code, lang="javascript"):
 def test_valid_modern_js_passes():
     code = "class Counter {\n  #count = 0;\n  inc = () => this.#count++;\n}\nconst x = obj?.a ?? 1;"
     result = js_code_parses.evaluate(session_with_answer(f"Here:\n\n{fenced(code)}\n\nDone."))
-    assert result.passed is True
-    assert result.score == 1.0
+    assert (result.passed, result.value) == (True, "has_js_code")
 
 
 def test_broken_block_fails_and_names_it():
     answer = f"{fenced('const a = 1;')}\n\nand\n\n{fenced('function add(a, b) {\n  return a +;\n}', 'js')}"
     result = js_code_parses.evaluate(session_with_answer(answer))
-    assert result.passed is False
-    assert result.score == 0.5
+    assert (result.passed, result.value) == (False, "has_js_code")
+    assert "1/2" in result.explanation
     assert "block 2" in result.explanation and "line 2" in result.explanation
 
 
@@ -117,14 +117,14 @@ def test_missing_closing_brace_fails():
 def test_jsx_and_other_tags_count_as_js():
     answer = fenced("const el = <div>{name}</div>;", "jsx") + "\n" + fenced("x = ;", "JS")
     result = js_code_parses.evaluate(session_with_answer(answer))
-    assert result.score == 0.5
+    assert result.passed is False
+    assert "1/2" in result.explanation
 
 
-def test_non_js_blocks_are_ignored():
+def test_non_js_blocks_are_ignored_and_no_code_passes():
     answer = fenced("print('hi'", "python") + "\n" + fenced("TypeError: x is not a function", "text")
     result = js_code_parses.evaluate(session_with_answer(answer))
-    assert result.passed is None
-    assert result.value == "no_js_code"
+    assert (result.passed, result.value) == (True, "no_js_code")
 
 
 def test_broken_code_quoted_from_the_question_is_skipped():
@@ -135,8 +135,9 @@ def test_broken_code_quoted_from_the_question_is_skipped():
     assert "1 quoted from the question" in result.explanation
 
 
-def test_js_code_parses_no_answer():
-    assert js_code_parses.evaluate(no_answer_session()).value == "no_answer"
+def test_js_code_parses_no_answer_fails():
+    result = js_code_parses.evaluate(no_answer_session())
+    assert (result.passed, result.value) == (False, "no_js_code")
 
 
 # cited_lessons_retrieved
@@ -152,8 +153,7 @@ def test_cited_and_retrieved_passes():
         "Closures keep variables alive (see JavaScript Closures).", extra_nodes=[search_node("JavaScript Closures")]
     )
     result = cited_lessons_retrieved.evaluate(view)
-    assert result.passed is True
-    assert result.score == 1.0
+    assert (result.passed, result.value) == (True, "has_citation")
 
 
 def test_cited_but_not_retrieved_fails():
@@ -161,9 +161,8 @@ def test_cited_but_not_retrieved_fails():
     result = cited_lessons_retrieved.evaluate(
         session_with_answer(answer, extra_nodes=[search_node("JavaScript Closures")])
     )
-    assert result.passed is False
-    assert result.score == 0.5
-    assert "JavaScript Scope" in result.explanation
+    assert (result.passed, result.value) == (False, "has_citation")
+    assert "JavaScript Scope" in result.explanation and "JavaScript Closures" not in result.explanation
 
 
 def test_citing_without_any_search_fails():
@@ -174,8 +173,7 @@ def test_citing_without_any_search_fails():
 def test_lowercase_prose_headings_and_code_are_not_citations():
     answer = "# JavaScript Closures\n\nJavaScript closures capture scope.\n\n```js\n// JavaScript Scope\n```"
     result = cited_lessons_retrieved.evaluate(session_with_answer(answer))
-    assert result.passed is None
-    assert result.value == "no_citations"
+    assert (result.passed, result.value) == (True, "no_citation")
 
 
 def test_longer_title_wins_over_the_title_it_contains():
@@ -201,10 +199,15 @@ def test_titles_from_several_searches_count():
 
 def test_require_citation():
     view = session_with_answer("Closures remember.", extra_nodes=[search_node("JavaScript Closures")])
-    assert cited_lessons_retrieved.evaluate(view).value == "no_citations"
+    default = cited_lessons_retrieved.evaluate(view)
+    assert (default.passed, default.value) == (True, "no_citation")
     result = cited_lessons_retrieved.evaluate(view, require_citation=True)
-    assert result.passed is False
-    assert result.value == "uncited"
+    assert (result.passed, result.value) == (False, "no_citation")
+
+
+def test_cited_lessons_no_answer_fails():
+    result = cited_lessons_retrieved.evaluate(no_answer_session())
+    assert (result.passed, result.value) == (False, "no_citation")
 
 
 @pytest.mark.parametrize(
@@ -219,6 +222,24 @@ def test_cited_lessons_rejects_invalid_params(params):
 async def test_new_evaluators_meet_kitarus_contract(module):
     results = await call_evaluator(module.NAME, module.evaluate, session_with_answer("hi"), {})
     assert [r.name for r in results] == [module.NAME]
+
+
+@pytest.mark.parametrize("module", [js_code_parses, cited_lessons_retrieved])
+@pytest.mark.parametrize(
+    "view",
+    [
+        session_with_answer("no code, no lessons"),
+        session_with_answer(fenced("x = ;") + "\nPer JavaScript Scope."),
+        session_with_answer(fenced("let a = 1;") + "\nSee JavaScript Scope.", extra_nodes=[search_node("JavaScript Scope")]),
+        no_answer_session(),
+    ],
+)
+def test_every_result_is_categorical_with_a_verdict(module, view):
+    # Kitaru only counts labels for categorical results and groups summaries by data type,
+    # so every result must be categorical (score and label both set) to land in one summary row.
+    result = module.evaluate(view)
+    assert result.data_type is EvaluationDataType.CATEGORICAL
+    assert isinstance(result.passed, bool) and result.score is result.passed
 
 
 pytestmark = pytest.mark.anyio

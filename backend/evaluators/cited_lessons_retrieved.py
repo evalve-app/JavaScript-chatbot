@@ -15,6 +15,8 @@ Deterministic. How it decides:
 Limits: a made-up title that isn't in the catalog can't be recognized, and a lesson
 retrieved in an earlier turn (a different session) counts as not retrieved.
 
+Every result has a pass/fail and a label: has_citation or no_citation.
+
 Params:
     require_citation  also fail when lessons were retrieved but none is cited (default false)
     catalog_titles    replace CATALOG_TITLES when the lesson library changes
@@ -94,10 +96,20 @@ def cited_titles(answer: str, known: set[str]) -> set[str]:
     return cited
 
 
+def result(passed: bool, label: str, explanation: str) -> EvaluationResult:
+    # score mirrors passed: a score plus a label makes Kitaru store the result as categorical,
+    # so experiment summaries count the labels and report one pass rate for every session.
+    return EvaluationResult(name=NAME, passed=passed, score=passed, value=label, explanation=explanation)
+
+
 def evaluate(
     session: SessionView, require_citation: bool = False, catalog_titles: list[str] | None = None, **_: Any
 ) -> EvaluationResult:
-    """Pass when every cited lesson title was retrieved in this session."""
+    """Pass when every cited lesson title was retrieved in this session.
+
+    Label has_citation or no_citation. An answer citing nothing passes, unless
+    require_citation is set and it retrieved lessons; a turn with no recorded answer fails.
+    """
     if catalog_titles is not None and not (
         isinstance(catalog_titles, list) and all(isinstance(t, str) and t.strip() for t in catalog_titles)
     ):
@@ -107,9 +119,7 @@ def evaluate(
 
     answer = final_answer(session)
     if answer is None:
-        return EvaluationResult(
-            name=NAME, value="no_answer", passed=None, explanation="No final answer recorded on the turn."
-        )
+        return result(False, "no_citation", "No final answer recorded on the turn.")
 
     retrieved = retrieved_titles(session)
     cited = cited_titles(answer, set(CATALOG_TITLES if catalog_titles is None else catalog_titles) | retrieved)
@@ -117,26 +127,10 @@ def evaluate(
 
     if not cited:
         if require_citation and retrieved:
-            return EvaluationResult(
-                name=NAME,
-                value="uncited",
-                passed=False,
-                explanation=f"Retrieved {len(retrieved)} lesson(s) but cited none: {', '.join(sorted(retrieved))}.",
-            )
-        return EvaluationResult(
-            name=NAME, value="no_citations", passed=None, explanation="The answer names no lesson titles."
-        )
+            listed = ", ".join(sorted(retrieved))
+            return result(False, "no_citation", f"Retrieved {len(retrieved)} lesson(s) but cited none: {listed}.")
+        return result(True, "no_citation", "The answer names no lesson titles.")
 
     if not_retrieved:
-        explanation = f"Cited but not retrieved: {', '.join(not_retrieved)}."
-    else:
-        explanation = f"All {len(cited)} cited lesson(s) were retrieved: {', '.join(sorted(cited))}."
-    return EvaluationResult(
-        name=NAME,
-        passed=not not_retrieved,
-        score=(len(cited) - len(not_retrieved)) / len(cited),
-        min_score=0.0,
-        max_score=1.0,
-        target_score=1.0,
-        explanation=explanation,
-    )
+        return result(False, "has_citation", f"Cited but not retrieved: {', '.join(not_retrieved)}.")
+    return result(True, "has_citation", f"All {len(cited)} cited lesson(s) were retrieved: {', '.join(sorted(cited))}.")

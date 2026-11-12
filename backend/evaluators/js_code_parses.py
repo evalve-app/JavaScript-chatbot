@@ -11,6 +11,8 @@ only: code that parses can still be wrong.
 Blocks that appear verbatim in the student's question are skipped, so quoting the
 student's own broken code back to them in a debugging answer is not a failure.
 
+Every result has a pass/fail and a label: has_js_code or no_js_code.
+
 The worker installs the dependencies above from the inline script block.
 
 Register and run:
@@ -79,13 +81,21 @@ def _normalize(code: str) -> str:
     return " ".join(code.split())
 
 
+def result(passed: bool, label: str, explanation: str) -> EvaluationResult:
+    # score mirrors passed: a score plus a label makes Kitaru store the result as categorical,
+    # so experiment summaries count the labels and report one pass rate for every session.
+    return EvaluationResult(name=NAME, passed=passed, score=passed, value=label, explanation=explanation)
+
+
 def evaluate(session: SessionView, **_: Any) -> EvaluationResult:
-    """Pass when every JavaScript block the answer wrote (not quoted from the question) parses."""
+    """Pass when every JavaScript block the answer wrote (not quoted from the question) parses.
+
+    Label has_js_code or no_js_code. An answer with no code of its own passes; a turn with
+    no recorded answer fails.
+    """
     answer = final_answer(session)
     if answer is None:
-        return EvaluationResult(
-            name=NAME, value="no_answer", passed=None, explanation="No final answer recorded on the turn."
-        )
+        return result(False, "no_js_code", "No final answer recorded on the turn.")
 
     asked = _normalize(question(session))
     blocks = [b for b in js_blocks(answer) if b.strip()]
@@ -93,9 +103,7 @@ def evaluate(session: SessionView, **_: Any) -> EvaluationResult:
     skipped = len(blocks) - len(checked)
     if not checked:
         note = f" ({skipped} quoted from the question, skipped)" if skipped else ""
-        return EvaluationResult(
-            name=NAME, value="no_js_code", passed=None, explanation=f"No JavaScript code blocks to check{note}."
-        )
+        return result(True, "no_js_code", f"No JavaScript code blocks to check{note}.")
 
     errors = [(i, err) for i, block in enumerate(checked, 1) if (err := first_error(block)) is not None]
     valid = len(checked) - len(errors)
@@ -103,12 +111,4 @@ def evaluate(session: SessionView, **_: Any) -> EvaluationResult:
     explanation = f"{valid}/{len(checked)} JavaScript blocks parse" + (f" ({details})" if details else "")
     if skipped:
         explanation += f"; {skipped} quoted from the question, skipped"
-    return EvaluationResult(
-        name=NAME,
-        passed=not errors,
-        score=valid / len(checked),
-        min_score=0.0,
-        max_score=1.0,
-        target_score=1.0,
-        explanation=explanation + ".",
-    )
+    return result(not errors, "has_js_code", explanation + ".")
