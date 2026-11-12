@@ -1,5 +1,5 @@
 # /// script
-# dependencies = ["tree-sitter==0.26.1", "tree-sitter-javascript==0.25.0"]
+# dependencies = ["markdown-it-py==4.3.0", "tree-sitter==0.26.1", "tree-sitter-javascript==0.25.0"]
 # ///
 """Kitaru evaluator: does every JavaScript code block in StudyBot's answer parse?
 
@@ -7,6 +7,9 @@ Deterministic: each ```js / ```javascript (also jsx, mjs, cjs) block is parsed w
 tree-sitter's JavaScript grammar, which handles modern syntax (?., ??, class fields, JSX).
 A block counts as broken if the parse has any ERROR or MISSING node. This checks syntax
 only: code that parses can still be wrong.
+
+Blocks are found with a CommonMark parser, so the check sees every code block the student
+sees: inside blockquotes and list items, and an unclosed fence that runs to the end.
 
 Blocks that appear verbatim in the student's question are skipped, so quoting the
 student's own broken code back to them in a debugging answer is not a failure.
@@ -21,21 +24,19 @@ Register and run:
     kitaru session evaluate --all --evaluator studybot-js-code-parses@1
 """
 
-import re
 from typing import Any
 
 import tree_sitter
 import tree_sitter_javascript
 from kitaru.json_pointer import resolve_json_pointer
 from kitaru.task.evaluator import EvaluationResult, SessionView
+from markdown_it import MarkdownIt
 
 NAME = "js_code_parses"
 ROOT_ID = "turn"  # app.recording.recorder.ROOT_ID; the root node holds the question and final answer
 JS_LANGUAGES = {"js", "javascript", "jsx", "mjs", "cjs"}
 
-# An opening fence (``` or ~~~, optional language tag), its body, and the matching closing fence.
-FENCE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})[ \t]*(?P<lang>[\w+-]*)[^\n]*\n(?P<code>.*?)^[ \t]*(?P=fence)[ \t]*$", re.MULTILINE | re.DOTALL)
-
+MARKDOWN = MarkdownIt("commonmark")
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_javascript.language()))
 
 
@@ -59,7 +60,17 @@ def question(session: SessionView) -> str:
 
 
 def js_blocks(markdown: str) -> list[str]:
-    return [m["code"] for m in FENCE.finditer(markdown) if m["lang"].lower() in JS_LANGUAGES]
+    """The code of every fenced block Markdown renders with a JavaScript language tag.
+
+    Block tokens are flat, so fences nested in blockquotes or list items are included,
+    with the quote and indentation prefixes already removed.
+    """
+    blocks = []
+    for token in MARKDOWN.parse(markdown):
+        language = token.info.split(maxsplit=1)[0].lower() if token.info.strip() else ""
+        if token.type == "fence" and language in JS_LANGUAGES:
+            blocks.append(token.content)
+    return blocks
 
 
 def first_error(code: str) -> str | None:

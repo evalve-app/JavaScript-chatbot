@@ -115,6 +115,33 @@ def test_non_js_blocks_are_ignored_and_no_code_passes():
     assert (result.passed, result.value) == (True, "no_js_code")
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Try this:\n\n```javascript\nconst x = ;\n",  # unclosed fence: Markdown renders it to the end
+        "> Example:\n>\n> ```js\n> const x = ;\n> ```\n",  # fence inside a blockquote
+        "1. ```js\n   const x = ;\n   ```\n",  # fence on a list item's marker line
+        "- Step one:\n\n  ```js\n  const x = ;\n  ```\n",  # fence nested in a list item
+    ],
+)
+def test_broken_code_in_any_rendered_fence_fails(answer):
+    result = js_code_parses.evaluate(session_with_answer(answer))
+    assert (result.passed, result.value) == (False, "has_js_code")
+
+
+def test_fence_like_text_inside_a_block_does_not_split_it():
+    # A shorter backtick run inside a ```` fence is content, not a closing fence.
+    answer = "````js\n/*\n```\n*/\nconst x = 1;\n````"
+    assert js_code_parses.js_blocks(answer) == ["/*\n```\n*/\nconst x = 1;\n"]
+    result = js_code_parses.evaluate(session_with_answer(answer))
+    assert (result.passed, result.value) == (True, "has_js_code")
+
+
+def test_indented_code_without_a_js_fence_is_ignored():
+    result = js_code_parses.evaluate(session_with_answer("Output:\n\n    const x = ;\n"))
+    assert (result.passed, result.value) == (True, "no_js_code")
+
+
 def test_broken_code_quoted_from_the_question_is_skipped():
     broken = "function greet( {\n  return 'hi';\n}"
     answer = f"Your code:\n\n{fenced(broken)}\n\nFixed:\n\n{fenced(broken.replace('( {', '() {'))}"
